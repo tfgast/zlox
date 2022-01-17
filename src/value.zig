@@ -2,7 +2,9 @@ const std = @import("std");
 const memory = @import("memory.zig");
 const Allocator = std.mem.Allocator;
 
-pub const ValueType = enum { boolean, nil, number };
+pub const ValueType = enum {
+    boolean, nil, number
+};
 
 pub const Value = union(ValueType) {
     boolean: bool,
@@ -14,6 +16,18 @@ pub const Value = union(ValueType) {
             .boolean => |boolean| boolean,
             .nil => false,
             .number => true,
+        };
+    }
+
+    pub fn equal(self: Value, other: Value) bool {
+        const ty: ValueType = self;
+        if (ty != other) {
+            return false;
+        }
+        return switch (self) {
+            .boolean => |boolean| boolean == other.boolean,
+            .nil => true,
+            .number => |number| number == other.number,
         };
     }
 };

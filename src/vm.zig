@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
 const value = @import("value.zig");
+const Value = value.Value;
 const debug = @import("debug.zig");
 
 const Compiler = @import("compiler.zig").Compiler;
@@ -16,10 +17,10 @@ pub const VM = struct {
 
     allocator: Allocator,
     compiler: Compiler,
-    stack: [STACK_MAX]value.Value,
+    stack: [STACK_MAX]Value,
 
     pub fn init(allocator: Allocator) Self {
-        return Self{ .allocator = allocator, .compiler = Compiler.init(allocator), .stack = [_]value.Value{.nil} ** STACK_MAX };
+        return Self{ .allocator = allocator, .compiler = Compiler.init(allocator), .stack = [_]Value{.nil} ** STACK_MAX };
     }
 
     pub fn free(self: *Self) void {
@@ -36,20 +37,28 @@ pub const VM = struct {
     }
 };
 
-fn add(x: f64, y: f64) f64 {
-    return x + y;
+fn greater(x: f64, y: f64) Value {
+    return .{ .boolean = (x > y)};
 }
 
-fn sub(x: f64, y: f64) f64 {
-    return x - y;
+fn less(x: f64, y: f64) Value {
+    return .{ .boolean = (x < y)};
 }
 
-fn mul(x: f64, y: f64) f64 {
-    return x * y;
+fn add(x: f64, y: f64) Value {
+    return .{.number = x + y};
 }
 
-fn div(x: f64, y: f64) f64 {
-    return x / y;
+fn sub(x: f64, y: f64) Value {
+    return .{.number = x - y};
+}
+
+fn mul(x: f64, y: f64) Value {
+    return .{.number = x * y};
+}
+
+fn div(x: f64, y: f64) Value {
+    return .{.number = x / y};
 }
 
 const ExecutionContext = struct {
@@ -58,7 +67,7 @@ const ExecutionContext = struct {
     vm: *VM,
     chunk: *Chunk,
     ip: [*]u8,
-    stack_top: [*]value.Value,
+    stack_top: [*]Value,
 
     fn resetStack(self: *Self) void {
         self.stack_top = &self.vm.stack;
@@ -73,17 +82,17 @@ const ExecutionContext = struct {
         self.resetStack();
     }
 
-    fn push(self: *Self, v: value.Value) void {
+    fn push(self: *Self, v: Value) void {
         self.stack_top[0] = v;
         self.stack_top += 1;
     }
 
-    fn pop(self: *Self) value.Value {
+    fn pop(self: *Self) Value {
         self.stack_top -= 1;
         return self.stack_top[0];
     }
 
-    fn peek(self: *Self, distance: usize) value.Value {
+    fn peek(self: *Self, distance: usize) Value {
         const v = self.stack_top - (distance + 1);
         return v[0];
     }
@@ -94,11 +103,11 @@ const ExecutionContext = struct {
         return b;
     }
 
-    fn read_constant(self: *Self) value.Value {
+    fn read_constant(self: *Self) Value {
         return self.chunk.constants.values[self.read_byte()];
     }
 
-    fn read_constant_long(self: *Self) value.Value {
+    fn read_constant_long(self: *Self) Value {
         const b0 = @intCast(u32, self.read_byte());
         const b1 = @intCast(u32, self.read_byte());
         const b2 = @intCast(u32, self.read_byte());
@@ -109,7 +118,7 @@ const ExecutionContext = struct {
         while (true) {
             if (builtin.mode == std.builtin.Mode.Debug) {
                 std.debug.print("          ", .{});
-                const n = (@ptrToInt(self.stack_top) - @ptrToInt(&self.vm.stack)) / @sizeOf(value.Value);
+                const n = (@ptrToInt(self.stack_top) - @ptrToInt(&self.vm.stack)) / @sizeOf(Value);
                 var slice = self.vm.stack[0..n];
                 for (slice) |v| {
                     std.debug.print("[ ", .{});
@@ -143,17 +152,28 @@ const ExecutionContext = struct {
                 .False => {
                     self.push(.{ .boolean = false });
                 },
+                .Equal => {
+                    const b = self.pop();
+                    const a = self.pop();
+                    self.push(.{ .boolean = a.equal(b) });
+                },
+                .Greater => {
+                    try self.binaryOp(greater);
+                },
+                .Less => {
+                    try self.binaryOp(less);
+                },
                 .Add => {
-                    try self.binaryOp(.number, add);
+                    try self.binaryOp(add);
                 },
                 .Subtract => {
-                    try self.binaryOp(.number, sub);
+                    try self.binaryOp(sub);
                 },
                 .Multiply => {
-                    try self.binaryOp(.number, mul);
+                    try self.binaryOp(mul);
                 },
                 .Divide => {
-                    try self.binaryOp(.number, div);
+                    try self.binaryOp(div);
                 },
                 .Not => {
                     self.push(.{ .boolean = !self.pop().isFalsey() });
@@ -172,13 +192,13 @@ const ExecutionContext = struct {
         }
     }
 
-    fn binaryOp(self: *Self, valueType: value.ValueType, comptime op: anytype) InterpretError!void {
-        if ((self.peek(0) != valueType) or (self.peek(1) != valueType)) {
+    fn binaryOp(self: *Self, comptime op: anytype) InterpretError!void {
+        if ((self.peek(0) != .number) or (self.peek(1) != .number)) {
             self.runtimeError("Operands must be numbers.", .{});
             return InterpretError.Runtime;
         }
         const rhs = self.pop();
         const lhs = self.pop();
-        self.push(.{ .number = op(lhs.number, rhs.number) });
+        self.push(op(lhs.number, rhs.number));
     }
 };

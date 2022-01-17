@@ -41,43 +41,48 @@ const ParseRule = struct {
     precedence: Precedence,
 
     fn get(ty: TokenType) ParseRule {
+        const grouping = CompileContext.grouping;
+        const unary = CompileContext.unary;
+        const binary = CompileContext.binary;
+        const literal = CompileContext.literal;
+        const number = CompileContext.number;
         return switch (ty) {
-            .LeftParen => .{ .prefix = CompileContext.grouping, .infix = null, .precedence = .None },
+            .LeftParen => .{ .prefix = grouping, .infix = null, .precedence = .None },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
             .LeftBrace => .{ .prefix = null, .infix = null, .precedence = .None },
             .RightBrace => .{ .prefix = null, .infix = null, .precedence = .None },
             .Comma => .{ .prefix = null, .infix = null, .precedence = .None },
             .Dot => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Minus => .{ .prefix = CompileContext.unary, .infix = CompileContext.binary, .precedence = .Term },
-            .Plus => .{ .prefix = null, .infix = CompileContext.binary, .precedence = .Term },
+            .Minus => .{ .prefix = unary, .infix = binary, .precedence = .Term },
+            .Plus => .{ .prefix = null, .infix = binary, .precedence = .Term },
             .Semicolon => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Slash => .{ .prefix = null, .infix = CompileContext.binary, .precedence = .Factor },
-            .Star => .{ .prefix = null, .infix = CompileContext.binary, .precedence = .Factor },
-            .Bang => .{ .prefix = CompileContext.unary, .infix = null, .precedence = .None },
-            .BangEqual => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Slash => .{ .prefix = null, .infix = binary, .precedence = .Factor },
+            .Star => .{ .prefix = null, .infix = binary, .precedence = .Factor },
+            .Bang => .{ .prefix = unary, .infix = null, .precedence = .None },
+            .BangEqual => .{ .prefix = null, .infix = binary, .precedence = .Equality },
             .Equal => .{ .prefix = null, .infix = null, .precedence = .None },
-            .EqualEqual => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Greater => .{ .prefix = null, .infix = null, .precedence = .None },
-            .GreaterEqual => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Less => .{ .prefix = null, .infix = null, .precedence = .None },
-            .LessEqual => .{ .prefix = null, .infix = null, .precedence = .None },
+            .EqualEqual => .{ .prefix = null, .infix = binary, .precedence = .Equality },
+            .Greater => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
+            .GreaterEqual => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
+            .Less => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
+            .LessEqual => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
             .Identifier => .{ .prefix = null, .infix = null, .precedence = .None },
             .String => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Number => .{ .prefix = CompileContext.number, .infix = null, .precedence = .None },
+            .Number => .{ .prefix = number, .infix = null, .precedence = .None },
             .And => .{ .prefix = null, .infix = null, .precedence = .None },
             .Class => .{ .prefix = null, .infix = null, .precedence = .None },
             .Else => .{ .prefix = null, .infix = null, .precedence = .None },
-            .False => .{ .prefix = CompileContext.literal, .infix = null, .precedence = .None },
+            .False => .{ .prefix = literal, .infix = null, .precedence = .None },
             .For => .{ .prefix = null, .infix = null, .precedence = .None },
             .Fun => .{ .prefix = null, .infix = null, .precedence = .None },
             .If => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Nil => .{ .prefix = CompileContext.literal, .infix = null, .precedence = .None },
+            .Nil => .{ .prefix = literal, .infix = null, .precedence = .None },
             .Or => .{ .prefix = null, .infix = null, .precedence = .None },
             .Print => .{ .prefix = null, .infix = null, .precedence = .None },
             .Return => .{ .prefix = null, .infix = null, .precedence = .None },
             .Super => .{ .prefix = null, .infix = null, .precedence = .None },
             .This => .{ .prefix = null, .infix = null, .precedence = .None },
-            .True => .{ .prefix = CompileContext.literal, .infix = null, .precedence = .None },
+            .True => .{ .prefix = literal, .infix = null, .precedence = .None },
             .Var => .{ .prefix = null, .infix = null, .precedence = .None },
             .While => .{ .prefix = null, .infix = null, .precedence = .None },
             .Error => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -147,6 +152,10 @@ const CompileContext = struct {
     }
     fn emitOpCode(self: *Self, opCode: OpCode) void {
         self.emitByte(@enumToInt(opCode));
+    }
+    fn emitOpCodes(self: *Self, opCode1: OpCode, opCode2: OpCode) void {
+        self.emitOpCode(opCode1);
+        self.emitOpCode(opCode2);
     }
     fn emitBytes(self: *Self, byte1: u8, byte2: u8) void {
         self.emitByte(byte1);
@@ -235,6 +244,12 @@ const CompileContext = struct {
             .Minus => self.emitOpCode(.Subtract),
             .Star => self.emitOpCode(.Multiply),
             .Slash => self.emitOpCode(.Divide),
+            .BangEqual => self.emitOpCodes(.Equal, .Not),
+            .EqualEqual => self.emitOpCode(.Equal),
+            .Greater => self.emitOpCode(.Greater),
+            .GreaterEqual => self.emitOpCodes(.Less, .Not),
+            .Less => self.emitOpCode(.Less),
+            .LessEqual => self.emitOpCodes(.Greater, .Not),
             else => {
                 std.log.err("ICE: Invalid binary operator {s}", .{@tagName(operatorType)});
                 self.parser.panicMode = true;
