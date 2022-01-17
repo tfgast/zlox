@@ -22,7 +22,7 @@ pub const VM = struct {
 
     pub fn init(allocator: Allocator) !Self {
         const gc = try GarbageCollector.init(allocator);
-        return Self{ .gc = gc, .compiler = Compiler.init(gc), .stack = [_]Value{.nil} ** STACK_MAX};
+        return Self{ .gc = gc, .compiler = Compiler.init(gc), .stack = [_]Value{.nil} ** STACK_MAX };
     }
 
     pub fn free(self: *Self) void {
@@ -40,27 +40,27 @@ pub const VM = struct {
 };
 
 fn greater(x: f64, y: f64) Value {
-    return .{ .boolean = (x > y)};
+    return .{ .boolean = (x > y) };
 }
 
 fn less(x: f64, y: f64) Value {
-    return .{ .boolean = (x < y)};
+    return .{ .boolean = (x < y) };
 }
 
 fn add(x: f64, y: f64) Value {
-    return .{.number = x + y};
+    return .{ .number = x + y };
 }
 
 fn sub(x: f64, y: f64) Value {
-    return .{.number = x - y};
+    return .{ .number = x - y };
 }
 
 fn mul(x: f64, y: f64) Value {
-    return .{.number = x * y};
+    return .{ .number = x * y };
 }
 
 fn div(x: f64, y: f64) Value {
-    return .{.number = x / y};
+    return .{ .number = x / y };
 }
 
 const ExecutionContext = struct {
@@ -216,7 +216,7 @@ const ExecutionContext = struct {
     fn concatenate(self: *Self) InterpretError!void {
         const b = self.pop().asString();
         const a = self.pop().asString();
-        const chars = std.mem.concat(self.vm.gc.allocator, u8, &[_][] const u8{a.str, b.str}) catch {
+        const chars = std.mem.concat(self.vm.gc.allocator, u8, &[_][]const u8{ a.str, b.str }) catch {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
         };
@@ -227,6 +227,6 @@ const ExecutionContext = struct {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
         };
-        self.push(.{.obj = result.toObj()});
+        self.push(.{ .obj = result.toObj() });
     }
 };

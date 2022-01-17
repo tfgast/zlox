@@ -124,7 +124,7 @@ const CompileContext = struct {
     chunk: *Chunk,
 
     fn init(gc: *GarbageCollector, source: []const u8, chunk: *Chunk) Self {
-        return Self{.gc = gc, .scanner = Scanner.init(source), .parser = Parser{ .current = Token.empty(), .previous = Token.empty(), .hadError = false, .panicMode = false }, .chunk = chunk };
+        return Self{ .gc = gc, .scanner = Scanner.init(source), .parser = Parser{ .current = Token.empty(), .previous = Token.empty(), .hadError = false, .panicMode = false }, .chunk = chunk };
     }
 
     fn currentChunk(self: *Self) *Chunk {

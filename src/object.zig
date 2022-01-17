@@ -1,8 +1,6 @@
 const std = @import("std");
 
-pub const ObjType = enum {
-    String
-};
+pub const ObjType = enum { String };
 
 pub const Obj = struct {
     const Self = Obj;
@@ -32,9 +30,9 @@ pub const ObjString = struct {
 
     obj: Obj,
     str: []u8,
+    hash: u32,
 
     pub fn toObj(self: *Self) *Obj {
         return &self.obj;
     }
 };
-

@@ -7,9 +7,7 @@ const Obj = object.Obj;
 const ObjType = object.ObjType;
 const ObjString = object.ObjString;
 
-pub const ValueType = enum {
-    boolean, nil, number, obj
-};
+pub const ValueType = enum { boolean, nil, number, obj };
 
 pub const Value = union(ValueType) {
     boolean: bool,
@@ -41,7 +39,7 @@ pub const Value = union(ValueType) {
                 const a = obj.asStringBytes();
                 const b = obj.asStringBytes();
                 return std.mem.eql(u8, a, b);
-            }
+            },
         };
     }
 
@@ -64,7 +62,6 @@ pub const Value = union(ValueType) {
     pub fn asStringBytes(self: Value) []u8 {
         return self.asString().str;
     }
-
 };
 
 pub fn print(value: Value) void {
@@ -75,6 +72,11 @@ pub fn print(value: Value) void {
         .obj => |obj| obj.print(),
     }
 }
+
+pub const Entry = struct {
+    key: ?*ObjString,
+    value: *Value,
+};
 
 pub const Array = struct {
     values: []Value,
