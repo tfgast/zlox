@@ -32,14 +32,7 @@ pub const Value = union(ValueType) {
             .boolean => |boolean| boolean == other.boolean,
             .nil => true,
             .number => |number| number == other.number,
-            .obj => |obj| {
-                if (obj.type != other.obj.type) {
-                    return false;
-                }
-                const a = obj.asStringBytes();
-                const b = obj.asStringBytes();
-                return std.mem.eql(u8, a, b);
-            },
+            .obj => |obj| obj == other.obj,
         };
     }
 
@@ -75,7 +68,7 @@ pub fn print(value: Value) void {
 
 pub const Entry = struct {
     key: ?*ObjString,
-    value: *Value,
+    value: Value,
 };
 
 pub const Array = struct {

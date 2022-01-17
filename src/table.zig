@@ -1,13 +1,14 @@
+const std = @import("std");
 const value = @import("value.zig");
 const object = @import("object.zig");
 const memory = @import("memory.zig");
 
-const value = value.Value;
+const Value = value.Value;
 const Entry = value.Entry;
 const ObjString = object.ObjString;
 const GarbageCollector = memory.GarbageCollector;
 
-const TABLE_MAX_LOAD = 0.75;
+const TABLE_MAX_LOAD: f64 = 0.75;
 
 pub const Table = struct {
     const Self = Table;
@@ -25,12 +26,12 @@ pub const Table = struct {
     }
 
     pub fn free(self: *Self) void {
-        self.gc.free(self.entries);
+        self.gc.allocator.free(self.entries);
         self.entries.len = 0;
         self.count = 0;
     }
 
-    pub fn get(self: *const Self, key: *ObjString, value: *Value) bool {
+    pub fn get(self: *const Self, key: *ObjString, v: *Value) bool {
         if (self.count == 0) {
             return false;
         }
@@ -38,22 +39,24 @@ pub const Table = struct {
         if (entry.key == null) {
             return false;
         }
-        *value = entry.value;
+        v.* = entry.value;
         return true;
     }
 
-    pub fn set(self: *Self, key: *ObjString, value: Value) !bool {
-        if (self.count + 1 > self.entries.len * TABLE_MAX_LOAD) {
+    pub fn set(self: *Self, key: *ObjString, v: Value) !bool {
+        if (self.count + 1 > @floatToInt(usize, @intToFloat(f64, self.entries.len) *
+            TABLE_MAX_LOAD))
+        {
             const new_capacity = memory.grow_capacity(self.entries.len);
             try self.adjustCapacity(new_capacity);
         }
         var entry = Self.findEntry(self.entries, key);
         const isNewKey = entry.key == null;
-        if (isNewKey & &entry.value == .nil) {
+        if (isNewKey and entry.value == .nil) {
             self.count += 1;
         }
         entry.key = key;
-        entry.value = value;
+        entry.value = v;
         return isNewKey;
     }
 
@@ -81,15 +84,14 @@ pub const Table = struct {
     fn findEntry(entries: []Entry, key: *ObjString) *Entry {
         const capacity = entries.len;
         var index = key.hash % capacity;
-        var tombstone: *Entry = null;
+        var tombstone: ?*Entry = null;
         while (true) {
             const entry = &entries[index];
-            // TODO be careful about equaliy here
             if (entry.key == null) {
                 if (entry.value == .nil) {
                     //Empty entry
-                    if (tombstone == null) {
-                        return tombstone;
+                    if (tombstone) |t| {
+                        return t;
                     } else {
                         return entry;
                     }
@@ -111,9 +113,32 @@ pub const Table = struct {
         }
     }
 
+    pub fn findString(self: *Self, chars: []const u8, hash: u32) ?*ObjString {
+        if (self.count == 0) {
+            return null;
+        }
+        const capacity = self.entries.len;
+        var index = hash % capacity;
+        while (true) {
+            const entry = &self.entries[index];
+            if (entry.key) |key| {
+                if (key.hash == hash and std.mem.eql(u8, key.str, chars)) {
+                    return entry.key;
+                }
+            } else if (entry.value == .nil) {
+                // tombstone
+                return null;
+            }
+            index += 1;
+            if (index == capacity) {
+                index = 0;
+            }
+        }
+    }
+
     fn adjustCapacity(self: *Self, new_capacity: usize) !void {
         var entries = try self.gc.allocator.alloc(Entry, new_capacity);
-        std.mem.set(Entry, entries, Entry{ .key = null, .value = .{.nil} });
+        std.mem.set(Entry, entries, Entry{ .key = null, .value = .nil });
         self.count = 0;
         for (self.entries) |entry| {
             const key = entry.key orelse continue;
@@ -122,7 +147,7 @@ pub const Table = struct {
             dest.value = entry.value;
             self.count += 1;
         }
-        self.gc.free(self.entries);
+        self.gc.allocator.free(self.entries);
         self.entries = entries;
     }
 };

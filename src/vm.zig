@@ -22,7 +22,11 @@ pub const VM = struct {
 
     pub fn init(allocator: Allocator) !Self {
         const gc = try GarbageCollector.init(allocator);
-        return Self{ .gc = gc, .compiler = Compiler.init(gc), .stack = [_]Value{.nil} ** STACK_MAX };
+        return Self{
+            .gc = gc,
+            .compiler = Compiler.init(gc),
+            .stack = [_]Value{.nil} ** STACK_MAX,
+        };
     }
 
     pub fn free(self: *Self) void {

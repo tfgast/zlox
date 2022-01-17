@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
+const Table = @import("table.zig").Table;
 
 const object = @import("object.zig");
 const Obj = object.Obj;
@@ -20,6 +21,7 @@ pub const GarbageCollector = struct {
     const Self = GarbageCollector;
     allocator: Allocator,
     inner_allocator: Allocator,
+    strings: Table,
     objects: ?*Obj,
 
     pub fn init(allocator: Allocator) !*Self {
@@ -27,7 +29,14 @@ pub const GarbageCollector = struct {
         self.allocator = Allocator.init(self, Self.allocFn, Self.resizeFn, Self.freeFn);
         self.inner_allocator = allocator;
         self.objects = null;
+        self.strings = Table.init(self);
         return self;
+    }
+
+    pub fn free(self: *Self) void {
+        self.strings.free();
+        self.freeObjects();
+        self.inner_allocator.destroy(self);
     }
 
     fn allocateObject(self: *Self, comptime T: type, comptime ty: ObjType) !*T {
@@ -47,6 +56,9 @@ pub const GarbageCollector = struct {
 
     pub fn copyString(self: *Self, chars: []const u8) !*ObjString {
         const hash = hashString(chars);
+        if (self.strings.findString(chars, hash)) |interned| {
+            return interned;
+        }
         const owned_chars = try self.allocator.dupe(u8, chars);
         errdefer {
             self.allocator.free(owned_chars);
@@ -56,18 +68,21 @@ pub const GarbageCollector = struct {
     }
     pub fn takeString(self: *Self, owned_chars: []u8) !*ObjString {
         const hash = hashString(owned_chars);
+        if (self.strings.findString(owned_chars, hash)) |interned| {
+            self.allocator.free(owned_chars);
+            return interned;
+        }
         return self.allocateString(owned_chars, hash);
     }
     fn allocateString(self: *Self, owned_chars: []u8, hash: u32) !*ObjString {
         const string = try self.allocateObject(ObjString, .String);
+        errdefer {
+            self.freeString(string);
+        }
         string.str = owned_chars;
         string.hash = hash;
+        _ = try self.strings.set(string, .nil);
         return string;
-    }
-
-    pub fn free(self: *Self) void {
-        self.freeObjects();
-        self.inner_allocator.destroy(self);
     }
 
     pub fn freeObjects(self: *Self) void {
@@ -82,11 +97,14 @@ pub const GarbageCollector = struct {
     pub fn freeObject(self: *Self, obj: *Obj) void {
         switch (obj.type) {
             .String => {
-                const string = obj.asString();
-                self.allocator.free(string.str);
-                self.allocator.destroy(string);
+                self.freeString(obj.asString());
             },
         }
+    }
+
+    pub fn freeString(self: *Self, string: *ObjString) void {
+        self.allocator.free(string.str);
+        self.allocator.destroy(string);
     }
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {
@@ -104,7 +122,7 @@ pub fn hashString(key: []const u8) u32 {
     var hash: u32 = 2166136261;
     for (key) |k| {
         hash ^= k;
-        hash *= 16777619;
+        hash = hash *% 16777619;
     }
     return hash;
 }
