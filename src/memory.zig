@@ -19,11 +19,13 @@ pub fn grow_capacity(capacity: usize) usize {
 pub const GarbageCollector = struct {
     const Self = GarbageCollector;
     allocator: Allocator,
+    inner_allocator: Allocator,
     objects: ?*Obj,
 
     pub fn init(allocator : Allocator) !*Self {
         var self = try allocator.create(Self);
-        self.allocator = allocator;
+        self.allocator = Allocator.init(self, Self.allocFn, Self.resizeFn, Self.freeFn);
+        self.inner_allocator = allocator;
         self.objects = null;
         return self;
     }
@@ -62,7 +64,7 @@ pub const GarbageCollector = struct {
 
     pub fn free(self: *Self) void {
         self.freeObjects();
-        self.allocator.destroy(self);
+        self.inner_allocator.destroy(self);
     }
 
     pub fn freeObjects(self: *Self) void {
@@ -82,5 +84,15 @@ pub const GarbageCollector = struct {
             self.allocator.destroy(string);
         }
        }
+    }
+
+    fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {
+        return self.inner_allocator.rawAlloc(len, ptr_align, len_align, ret_addr);
+    }
+    fn resizeFn(self: *Self, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
+        return self.inner_allocator.rawResize(buf, buf_align, new_len, len_align, ret_addr);
+    }
+    fn freeFn(self: *Self, buf: []u8, buf_align: u29, ret_addr: usize) void {
+        return self.inner_allocator.rawFree(buf, buf_align, ret_addr);
     }
 };
