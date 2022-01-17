@@ -7,6 +7,7 @@ const Value = value.Value;
 const debug = @import("debug.zig");
 
 const Compiler = @import("compiler.zig").Compiler;
+const GarbageCollector = @import("memory.zig").GarbageCollector;
 const Allocator = std.mem.Allocator;
 
 const InterpretError = error{ Compile, Runtime } || std.os.WriteError;
@@ -15,20 +16,21 @@ const STACK_MAX = 256;
 pub const VM = struct {
     const Self = VM;
 
-    allocator: Allocator,
+    gc: *GarbageCollector,
     compiler: Compiler,
     stack: [STACK_MAX]Value,
 
-    pub fn init(allocator: Allocator) Self {
-        return Self{ .allocator = allocator, .compiler = Compiler.init(allocator), .stack = [_]Value{.nil} ** STACK_MAX };
+    pub fn init(allocator: Allocator) !Self {
+        const gc = try GarbageCollector.init(allocator);
+        return Self{ .gc = gc, .compiler = Compiler.init(gc), .stack = [_]Value{.nil} ** STACK_MAX};
     }
 
     pub fn free(self: *Self) void {
-        _ = self;
+        self.gc.free();
     }
 
     pub fn interpret(self: *Self, source: []u8) InterpretError!void {
-        var chunk = Chunk.init(self.allocator);
+        var chunk = Chunk.init(self.gc.allocator);
         defer chunk.free();
         if (try self.compiler.compile(source, &chunk)) {
             var c = ExecutionContext{ .vm = self, .chunk = &chunk, .ip = chunk.code.ptr, .stack_top = &self.stack };
@@ -164,7 +166,16 @@ const ExecutionContext = struct {
                     try self.binaryOp(less);
                 },
                 .Add => {
-                    try self.binaryOp(add);
+                    if (self.peek(0).isString() and self.peek(1).isString()) {
+                        try self.concatenate();
+                    } else if ((self.peek(0) == .number) and (self.peek(1) == .number)) {
+                        const rhs = self.pop();
+                        const lhs = self.pop();
+                        self.push(add(lhs.number, rhs.number));
+                    } else {
+                        self.runtimeError("Operands must be numbers.", .{});
+                        return InterpretError.Runtime;
+                    }
                 },
                 .Subtract => {
                     try self.binaryOp(sub);
@@ -200,5 +211,22 @@ const ExecutionContext = struct {
         const rhs = self.pop();
         const lhs = self.pop();
         self.push(op(lhs.number, rhs.number));
+    }
+
+    fn concatenate(self: *Self) InterpretError!void {
+        const b = self.pop().asString();
+        const a = self.pop().asString();
+        const chars = std.mem.concat(self.vm.gc.allocator, u8, &[_][] const u8{a.str, b.str}) catch {
+            self.runtimeError("Memory allocation failed.", .{});
+            return InterpretError.Runtime;
+        };
+        errdefer {
+            self.vm.gc.allocator.free(chars);
+        }
+        const result = self.vm.gc.takeString(chars) catch {
+            self.runtimeError("Memory allocation failed.", .{});
+            return InterpretError.Runtime;
+        };
+        self.push(.{.obj = result.toObj()});
     }
 };

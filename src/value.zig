@@ -2,20 +2,26 @@ const std = @import("std");
 const memory = @import("memory.zig");
 const Allocator = std.mem.Allocator;
 
+const object = @import("object.zig");
+const Obj = object.Obj;
+const ObjType = object.ObjType;
+const ObjString = object.ObjString;
+
 pub const ValueType = enum {
-    boolean, nil, number
+    boolean, nil, number, obj
 };
 
 pub const Value = union(ValueType) {
     boolean: bool,
     nil: void,
     number: f64,
+    obj: *Obj,
 
     pub fn isFalsey(self: Value) bool {
         return switch (self) {
             .boolean => |boolean| boolean,
             .nil => false,
-            .number => true,
+            else => true,
         };
     }
 
@@ -28,8 +34,37 @@ pub const Value = union(ValueType) {
             .boolean => |boolean| boolean == other.boolean,
             .nil => true,
             .number => |number| number == other.number,
+            .obj => |obj| {
+                if (obj.type != other.obj.type) {
+                    return false;
+                }
+                const a = obj.asStringBytes();
+                const b = obj.asStringBytes();
+                return std.mem.eql(u8, a, b);
+            }
         };
     }
+
+    pub fn isObjType(self: Value, ty: ObjType) bool {
+        return switch (self) {
+            .obj => |obj| obj.type == ty,
+            else => false,
+        };
+    }
+
+    pub fn isString(self: Value) bool {
+        return self.isObjType(.String);
+    }
+
+    pub fn asString(self: Value) *ObjString {
+        std.debug.assert(self.isString());
+        return self.obj.asString();
+    }
+
+    pub fn asStringBytes(self: Value) []u8 {
+        return self.asString().str;
+    }
+
 };
 
 pub fn print(value: Value) void {
@@ -37,6 +72,7 @@ pub fn print(value: Value) void {
         .boolean => |boolean| std.debug.print("{}", .{boolean}),
         .nil => std.debug.print("nil", .{}),
         .number => |number| std.debug.print("{d}", .{number}),
+        .obj => |obj| obj.print(),
     }
 }
 

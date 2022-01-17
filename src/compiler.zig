@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const Allocator = std.mem.Allocator;
+const GarbageCollector = @import("memory.zig").GarbageCollector;
 
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
@@ -11,6 +11,9 @@ const scanner = @import("scanner.zig");
 const Scanner = scanner.Scanner;
 const Token = scanner.Token;
 const TokenType = scanner.TokenType;
+
+const object = @import("object.zig");
+const ObjString = object.ObjString;
 
 const Parser = struct {
     current: Token,
@@ -46,6 +49,7 @@ const ParseRule = struct {
         const binary = CompileContext.binary;
         const literal = CompileContext.literal;
         const number = CompileContext.number;
+        const string = CompileContext.string;
         return switch (ty) {
             .LeftParen => .{ .prefix = grouping, .infix = null, .precedence = .None },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -67,7 +71,7 @@ const ParseRule = struct {
             .Less => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
             .LessEqual => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
             .Identifier => .{ .prefix = null, .infix = null, .precedence = .None },
-            .String => .{ .prefix = null, .infix = null, .precedence = .None },
+            .String => .{ .prefix = string, .infix = null, .precedence = .None },
             .Number => .{ .prefix = number, .infix = null, .precedence = .None },
             .And => .{ .prefix = null, .infix = null, .precedence = .None },
             .Class => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -95,15 +99,15 @@ pub const CompileError = error{Compile};
 pub const Compiler = struct {
     const Self = Compiler;
 
-    allocator: Allocator,
+    gc: *GarbageCollector,
 
-    pub fn init(allocator: Allocator) Self {
-        return Self{ .allocator = allocator };
+    pub fn init(gc: *GarbageCollector) Self {
+        return Self{ .gc = gc };
     }
 
     pub fn compile(self: *Self, source: []const u8, chunk: *Chunk) CompileError!bool {
         _ = self;
-        var context = CompileContext.init(source, chunk);
+        var context = CompileContext.init(self.gc, source, chunk);
         context.advance();
         context.expression();
         context.consume(TokenType.EOF, "Expect end of expression");
@@ -114,12 +118,13 @@ pub const Compiler = struct {
 
 const CompileContext = struct {
     const Self = CompileContext;
+    gc: *GarbageCollector,
     scanner: Scanner,
     parser: Parser,
     chunk: *Chunk,
 
-    fn init(source: []const u8, chunk: *Chunk) Self {
-        return Self{ .scanner = Scanner.init(source), .parser = Parser{ .current = Token.empty(), .previous = Token.empty(), .hadError = false, .panicMode = false }, .chunk = chunk };
+    fn init(gc: *GarbageCollector, source: []const u8, chunk: *Chunk) Self {
+        return Self{.gc = gc, .scanner = Scanner.init(source), .parser = Parser{ .current = Token.empty(), .previous = Token.empty(), .hadError = false, .panicMode = false }, .chunk = chunk };
     }
 
     fn currentChunk(self: *Self) *Chunk {
@@ -217,6 +222,15 @@ const CompileContext = struct {
             return self.errorAtPrevious("Could not parse number");
         };
         self.emitConstant(.{ .number = value });
+    }
+
+    fn string(self: *Self) void {
+        const n = self.parser.previous.str.len - 1;
+        // remove quotes
+        const value = self.gc.copyString(self.parser.previous.str[1..n]) catch {
+            return self.errorAtPrevious("Could not allocate memory for string");
+        };
+        self.emitConstant(.{ .obj = value.toObj() });
     }
 
     fn unary(self: *Self) void {

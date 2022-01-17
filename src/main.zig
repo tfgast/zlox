@@ -27,13 +27,15 @@ pub fn main() anyerror!void {
 pub fn repl(allocator: Allocator) !void {
     const stdin = std.io.getStdIn().reader();
     const stdout = std.io.getStdOut();
-    var v = vm.VM.init(allocator);
+    var v = try vm.VM.init(allocator);
     defer v.free();
     var buf: [1024]u8 = undefined;
     while (true) {
         try stdout.writeAll("> ");
         if (try stdin.readUntilDelimiterOrEof(buf[0..], '\n')) |line| {
-            try v.interpret(line);
+            v.interpret(line) catch {
+                continue;
+            };
         } else {
             try stdout.writeAll("\n");
             break;
@@ -42,7 +44,7 @@ pub fn repl(allocator: Allocator) !void {
 }
 
 pub fn runFile(allocator: Allocator, path: []u8) !void {
-    var v = vm.VM.init(allocator);
+    var v = try vm.VM.init(allocator);
     defer v.free();
     const file = try std.fs.cwd().openFile(path, .{ .read = true });
     defer file.close();
