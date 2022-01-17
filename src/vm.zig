@@ -19,7 +19,7 @@ pub const VM = struct {
     stack: [STACK_MAX]value.Value,
 
     pub fn init(allocator: Allocator) Self {
-        return Self{ .allocator = allocator, .compiler = Compiler.init(allocator), .stack = [_]value.Value{0.0} ** STACK_MAX };
+        return Self{ .allocator = allocator, .compiler = Compiler.init(allocator), .stack = [_]value.Value{.nil} ** STACK_MAX };
     }
 
     pub fn free(self: *Self) void {
@@ -36,6 +36,22 @@ pub const VM = struct {
     }
 };
 
+fn add(x: f64, y: f64) f64 {
+    return x + y;
+}
+
+fn sub(x: f64, y: f64) f64 {
+    return x - y;
+}
+
+fn mul(x: f64, y: f64) f64 {
+    return x * y;
+}
+
+fn div(x: f64, y: f64) f64 {
+    return x / y;
+}
+
 const ExecutionContext = struct {
     const Self = ExecutionContext;
 
@@ -45,7 +61,16 @@ const ExecutionContext = struct {
     stack_top: [*]value.Value,
 
     fn resetStack(self: *Self) void {
-        self.stack_top = self.vm.stack.ptr;
+        self.stack_top = &self.vm.stack;
+    }
+
+    fn runtimeError(self: *Self, comptime format: []const u8, args: anytype) void {
+        std.debug.print(format, args);
+        std.debug.print("\n", .{});
+        const offset = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.ptr) - 1;
+        const line = self.chunk.getLine(offset);
+        std.debug.print("[line {d}] in script\n", .{line});
+        self.resetStack();
     }
 
     fn push(self: *Self, v: value.Value) void {
@@ -56,6 +81,11 @@ const ExecutionContext = struct {
     fn pop(self: *Self) value.Value {
         self.stack_top -= 1;
         return self.stack_top[0];
+    }
+
+    fn peek(self: *Self, distance: usize) value.Value {
+        const v = self.stack_top - (distance + 1);
+        return v[0];
     }
 
     fn read_byte(self: *Self) u8 {
@@ -104,33 +134,51 @@ const ExecutionContext = struct {
                     const constant = self.read_constant_long();
                     self.push(constant);
                 },
+                .Nil => {
+                    self.push(.nil);
+                },
+                .True => {
+                    self.push(.{ .boolean = true });
+                },
+                .False => {
+                    self.push(.{ .boolean = false });
+                },
                 .Add => {
-                    const b = self.pop();
-                    const a = self.pop();
-                    self.push(a + b);
+                    try self.binaryOp(.number, add);
                 },
                 .Subtract => {
-                    const b = self.pop();
-                    const a = self.pop();
-                    self.push(a - b);
+                    try self.binaryOp(.number, sub);
                 },
                 .Multiply => {
-                    const b = self.pop();
-                    const a = self.pop();
-                    self.push(a * b);
+                    try self.binaryOp(.number, mul);
                 },
                 .Divide => {
-                    const b = self.pop();
-                    const a = self.pop();
-                    self.push(a / b);
+                    try self.binaryOp(.number, div);
+                },
+                .Not => {
+                    self.push(.{ .boolean = !self.pop().isFalsey() });
                 },
                 .Negate => {
-                    self.push(-self.pop());
+                    if (self.peek(0) != .number) {
+                        self.runtimeError("Operand must be a number.", .{});
+                        return InterpretError.Runtime;
+                    }
+                    self.push(.{ .number = -self.pop().number });
                 },
                 _ => {
                     std.debug.print("Unknown opcode {d}", .{instruction});
                 },
             }
         }
+    }
+
+    fn binaryOp(self: *Self, valueType: value.ValueType, comptime op: anytype) InterpretError!void {
+        if ((self.peek(0) != valueType) or (self.peek(1) != valueType)) {
+            self.runtimeError("Operands must be numbers.", .{});
+            return InterpretError.Runtime;
+        }
+        const rhs = self.pop();
+        const lhs = self.pop();
+        self.push(.{ .number = op(lhs.number, rhs.number) });
     }
 };

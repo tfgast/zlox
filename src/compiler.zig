@@ -42,46 +42,46 @@ const ParseRule = struct {
 
     fn get(ty: TokenType) ParseRule {
         return switch (ty) {
-            .LeftParen => .{ .prefix = CompileContext.grouping, .infix = null, .precedence =.None },
-            .RightParen => .{ .prefix = null, .infix = null, .precedence =.None },
-            .LeftBrace => .{ .prefix = null, .infix = null, .precedence =.None },
-            .RightBrace => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Comma => .{.prefix =  null, .infix = null, .precedence =.None },
-            .Dot => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Minus => .{ .prefix = CompileContext.unary, .infix = CompileContext.binary, .precedence =.Term },
-            .Plus => .{ .prefix = null, .infix = CompileContext.binary, .precedence =.Term },
-            .Semicolon => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Slash => .{ .prefix = null, .infix = CompileContext.binary, .precedence =.Factor },
-            .Star => .{ .prefix = null, .infix = CompileContext.binary, .precedence =.Factor },
-            .Bang => .{ .prefix = null, .infix = null, .precedence =.None },
-            .BangEqual => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Equal => .{ .prefix = null, .infix = null, .precedence =.None },
-            .EqualEqual => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Greater => .{ .prefix = null, .infix = null, .precedence =.None },
-            .GreaterEqual => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Less => .{ .prefix = null, .infix = null, .precedence =.None },
-            .LessEqual => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Identifier => .{ .prefix = null, .infix = null, .precedence =.None },
-            .String => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Number => .{ .prefix = CompileContext.number, .infix = null, .precedence =.None },
-            .And => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Class => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Else => .{ .prefix = null, .infix = null, .precedence =.None },
-            .False => .{ .prefix = null, .infix = null, .precedence =.None },
-            .For => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Fun => .{ .prefix = null, .infix = null, .precedence =.None },
-            .If => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Nil => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Or => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Print => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Return => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Super => .{ .prefix = null, .infix = null, .precedence =.None },
-            .This => .{ .prefix = null, .infix = null, .precedence =.None },
-            .True => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Var => .{ .prefix = null, .infix = null, .precedence =.None },
-            .While => .{ .prefix = null, .infix = null, .precedence =.None },
-            .Error => .{ .prefix = null, .infix = null, .precedence =.None },
-            .EOF => .{ .prefix = null, .infix = null, .precedence =.None },
+            .LeftParen => .{ .prefix = CompileContext.grouping, .infix = null, .precedence = .None },
+            .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
+            .LeftBrace => .{ .prefix = null, .infix = null, .precedence = .None },
+            .RightBrace => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Comma => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Dot => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Minus => .{ .prefix = CompileContext.unary, .infix = CompileContext.binary, .precedence = .Term },
+            .Plus => .{ .prefix = null, .infix = CompileContext.binary, .precedence = .Term },
+            .Semicolon => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Slash => .{ .prefix = null, .infix = CompileContext.binary, .precedence = .Factor },
+            .Star => .{ .prefix = null, .infix = CompileContext.binary, .precedence = .Factor },
+            .Bang => .{ .prefix = CompileContext.unary, .infix = null, .precedence = .None },
+            .BangEqual => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Equal => .{ .prefix = null, .infix = null, .precedence = .None },
+            .EqualEqual => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Greater => .{ .prefix = null, .infix = null, .precedence = .None },
+            .GreaterEqual => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Less => .{ .prefix = null, .infix = null, .precedence = .None },
+            .LessEqual => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Identifier => .{ .prefix = null, .infix = null, .precedence = .None },
+            .String => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Number => .{ .prefix = CompileContext.number, .infix = null, .precedence = .None },
+            .And => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Class => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Else => .{ .prefix = null, .infix = null, .precedence = .None },
+            .False => .{ .prefix = CompileContext.literal, .infix = null, .precedence = .None },
+            .For => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Fun => .{ .prefix = null, .infix = null, .precedence = .None },
+            .If => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Nil => .{ .prefix = CompileContext.literal, .infix = null, .precedence = .None },
+            .Or => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Print => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Return => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Super => .{ .prefix = null, .infix = null, .precedence = .None },
+            .This => .{ .prefix = null, .infix = null, .precedence = .None },
+            .True => .{ .prefix = CompileContext.literal, .infix = null, .precedence = .None },
+            .Var => .{ .prefix = null, .infix = null, .precedence = .None },
+            .While => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Error => .{ .prefix = null, .infix = null, .precedence = .None },
+            .EOF => .{ .prefix = null, .infix = null, .precedence = .None },
         };
     }
 };
@@ -125,7 +125,7 @@ const CompileContext = struct {
         self.parser.previous = self.parser.current;
         while (true) {
             self.parser.current = self.scanner.scanToken();
-            // std.log.debug("{} {s} {}", self.parser.current);
+            // std.debug.print("Scanning: {} {s} {}\n", self.parser.current);
             if (self.parser.current.type != .Error) break;
             self.errorAtCurrent(self.parser.current.str);
         }
@@ -207,13 +207,14 @@ const CompileContext = struct {
         const value = std.fmt.parseFloat(f64, self.parser.previous.str) catch {
             return self.errorAtPrevious("Could not parse number");
         };
-        self.emitConstant(value);
+        self.emitConstant(.{ .number = value });
     }
 
     fn unary(self: *Self) void {
         const operatorType = self.parser.previous.type;
         self.parsePrecedence(.Unary);
         switch (operatorType) {
+            .Bang => self.emitOpCode(.Not),
             .Minus => self.emitOpCode(.Negate),
             else => {
                 std.log.err("ICE: Invalid unary operator {s}", .{@tagName(operatorType)});
@@ -243,12 +244,27 @@ const CompileContext = struct {
         }
     }
 
+    fn literal(self: *Self) void {
+        const lit = self.parser.previous.type;
+        switch (lit) {
+            .False => self.emitOpCode(.False),
+            .Nil => self.emitOpCode(.Nil),
+            .True => self.emitOpCode(.True),
+            else => {
+                std.log.err("ICE: Invalid literal {s}", .{@tagName(lit)});
+                self.parser.panicMode = true;
+                self.parser.hadError = true;
+                return;
+            },
+        }
+    }
+
     fn parsePrecedence(self: *Self, precedence: Precedence) void {
         self.advance();
         const rule = ParseRule.get(self.parser.previous.type);
         const prefix_rule = rule.prefix orelse {
-           self.errorAtPrevious("Expect expression."); 
-           return;
+            self.errorAtPrevious("Expect expression.");
+            return;
         };
         prefix_rule(self);
         while (@enumToInt(precedence) <= @enumToInt(ParseRule.get(self.parser.current.type).precedence)) {

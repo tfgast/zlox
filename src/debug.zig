@@ -27,6 +27,15 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .ConstantLong => {
             return constantLongInstruction("OP_CONSTANT_LONG", c, offset);
         },
+        .Nil => {
+            return simpleInstruction("OP_NIL", offset);
+        },
+        .True => {
+            return simpleInstruction("OP_TRUE", offset);
+        },
+        .False => {
+            return simpleInstruction("OP_FALSE", offset);
+        },
         .Add => {
             return simpleInstruction("OP_ADD", offset);
         },
@@ -41,6 +50,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         },
         .Negate => {
             return simpleInstruction("OP_NEGATE", offset);
+        },
+        .Not => {
+            return simpleInstruction("OP_NOT", offset);
         },
         _ => {
             print("Unknown opcode {d}", .{instruction});

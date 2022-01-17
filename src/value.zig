@@ -2,10 +2,28 @@ const std = @import("std");
 const memory = @import("memory.zig");
 const Allocator = std.mem.Allocator;
 
-pub const Value = f64;
+pub const ValueType = enum { boolean, nil, number };
+
+pub const Value = union(ValueType) {
+    boolean: bool,
+    nil: void,
+    number: f64,
+
+    pub fn isFalsey(self: Value) bool {
+        return switch (self) {
+            .boolean => |boolean| boolean,
+            .nil => false,
+            .number => true,
+        };
+    }
+};
 
 pub fn print(value: Value) void {
-    std.debug.print("{d}", .{value});
+    switch (value) {
+        .boolean => |boolean| std.debug.print("{}", .{boolean}),
+        .nil => std.debug.print("nil", .{}),
+        .number => |number| std.debug.print("{d}", .{number}),
+    }
 }
 
 pub const Array = struct {

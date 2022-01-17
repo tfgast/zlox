@@ -22,22 +22,6 @@ pub fn main() anyerror!void {
         std.log.err("Usage: zlox [path]\n", .{});
         std.process.exit(64);
     }
-    //var c = chunk.Chunk.init(allocator);
-    //defer c.free();
-
-    //try c.writeConstant(1.2, 123);
-    //try c.writeConstant(3.4, 123);
-
-    //try c.write(@enumToInt(chunk.OpCode.Add), 123);
-
-    //try c.writeConstant(5.6, 123);
-
-    //try c.write(@enumToInt(chunk.OpCode.Divide), 123);
-    //try c.write(@enumToInt(chunk.OpCode.Negate), 123);
-    //try c.write(@enumToInt(chunk.OpCode.Return), 123);
-
-    //debug.disassembleChunk(&c, "test chunk");
-    //try v.interpret(&c);
 }
 
 pub fn repl(allocator: Allocator) !void {
