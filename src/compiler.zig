@@ -315,6 +315,8 @@ const CompileContext = struct {
     fn statement(self: *Self) void {
         if (self.match(.Print)) {
             self.printStatement();
+        } else if (self.match(.For)) {
+            self.forStatement();
         } else if (self.match(.If)) {
             self.ifStatement();
         } else if (self.match(.While)) {
@@ -350,6 +352,51 @@ const CompileContext = struct {
         self.expression();
         self.consume(.Semicolon, "Expect ';' after value.");
         self.emitOpCode(.Pop);
+    }
+
+    fn forStatement(self: *Self) void {
+        self.beginScope();
+        self.consume(.LeftParen, "Expect '(' after 'for'.");
+        if (self.match(.Semicolon)) {
+        } else if (self.match(.Var)) {
+            self.varDeclaration();
+        } else {
+            self.expressionStatement();
+        }
+
+        var loopStart = self.currentChunk().code.len;
+        var exitJump : ?usize = null;
+        if (!self.match(.Semicolon)) {
+            self.expression();
+            self.consume(.Semicolon, "Expect ';' after loop condition.");
+
+            // Jump out of the loop if the condition is false.
+            exitJump = self.emitJump(.JumpIfFalse);
+            self.emitOpCode(.Pop);
+        }
+
+
+        if (!self.match(.RightParen)) {
+            const bodyJump = self.emitJump(.Jump);
+            const incStart = self.currentChunk().code.len;
+            self.expression();
+            self.emitOpCode(.Pop);
+            self.consume(.RightParen, "Expect ')' after for clauses.");
+
+            self.emitLoop(loopStart);
+            loopStart = incStart;
+            self.patchJump(bodyJump);
+        }
+
+        self.statement();
+        self.emitLoop(loopStart);
+
+        if (exitJump) |jump| {
+            self.patchJump(jump);
+            self.emitOpCode(.Pop);
+        }
+
+        self.endScope();
     }
 
     fn whileStatement(self: *Self) void {
