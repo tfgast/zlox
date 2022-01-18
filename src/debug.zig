@@ -46,6 +46,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .DefineGlobal => {
             return constantInstruction("OP_DEFINE_GLOBAL", c, offset);
         },
+        .SetGlobal => {
+            return constantInstruction("OP_SET_GLOBAL", c, offset);
+        },
         .Equal => {
             return simpleInstruction("OP_EQUAL", offset);
         },

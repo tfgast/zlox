@@ -189,6 +189,19 @@ const ExecutionContext = struct {
                         self.runtimeError("Out of Memory", .{});
                         return InterpretError.Runtime;
                     };
+                    _ = self.pop();
+                },
+                .SetGlobal => {
+                    const name = self.read_string();   
+                    const was_new = self.vm.globals.set(name, self.peek(0)) catch {
+                        self.runtimeError("Out of Memory", .{});
+                        return InterpretError.Runtime;
+                    };
+                    if (was_new) {
+                        _ = self.vm.globals.delete(name);
+                        self.runtimeError("Undefined variable '{s}'", .{name});
+                        return InterpretError.Runtime;
+                    }
                 },
                 .Equal => {
                     const b = self.pop();

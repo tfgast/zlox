@@ -36,7 +36,7 @@ const Precedence = enum {
     Primary,
 };
 
-const ParseFn = ?fn (*CompileContext) void;
+const ParseFn = ?fn (*CompileContext, bool) void;
 
 const ParseRule = struct {
     prefix: ParseFn,
@@ -281,19 +281,22 @@ const CompileContext = struct {
         self.emitOpCode(.Pop);
     }
 
-    fn grouping(self: *Self) void {
+    fn grouping(self: *Self, canAssign: bool) void {
+        _ = canAssign;
         self.expression();
         self.consume(.RightParen, "Expect ')' after expression.");
     }
 
-    fn number(self: *Self) void {
+    fn number(self: *Self, canAssign: bool) void {
+        _ = canAssign;
         const value = std.fmt.parseFloat(f64, self.parser.previous.str) catch {
             return self.errorAtPrevious("Could not parse number");
         };
         self.emitConstant(.{ .number = value });
     }
 
-    fn string(self: *Self) void {
+    fn string(self: *Self, canAssign: bool) void {
+        _ = canAssign;
         const n = self.parser.previous.str.len - 1;
         // remove quotes
         const value = self.gc.copyString(self.parser.previous.str[1..n]) catch {
@@ -302,17 +305,24 @@ const CompileContext = struct {
         self.emitConstant(.{ .obj = value.toObj() });
     }
 
-    fn namedVariable(self: *Self, name: Token) void {
+    fn namedVariable(self: *Self, name: Token, canAssign: bool) void {
         const arg = self.identifierConstant(&name);
-        self.emitOpCode(.GetGlobal);
-        self.emitByte(arg);
+        if (canAssign and self.match(.Equal)) {
+            self.expression();
+            self.emitOpCode(.SetGlobal);
+            self.emitByte(arg);
+        } else {
+            self.emitOpCode(.GetGlobal);
+            self.emitByte(arg);
+        }
     }
 
-    fn variable(self: *Self) void {
-        self.namedVariable(self.parser.previous);
+    fn variable(self: *Self, canAssign: bool) void {
+        self.namedVariable(self.parser.previous, canAssign);
     }
 
-    fn unary(self: *Self) void {
+    fn unary(self: *Self, canAssign: bool) void {
+        _ = canAssign;
         const operatorType = self.parser.previous.type;
         self.parsePrecedence(.Unary);
         switch (operatorType) {
@@ -327,7 +337,8 @@ const CompileContext = struct {
         }
     }
 
-    fn binary(self: *Self) void {
+    fn binary(self: *Self, canAssign: bool) void {
+        _ = canAssign;
         const operatorType = self.parser.previous.type;
         const rule = ParseRule.get(operatorType);
         const higher_precedence = @intToEnum(Precedence, @enumToInt(rule.precedence) + 1);
@@ -352,7 +363,8 @@ const CompileContext = struct {
         }
     }
 
-    fn literal(self: *Self) void {
+    fn literal(self: *Self, canAssign: bool) void {
+        _ = canAssign;
         const lit = self.parser.previous.type;
         switch (lit) {
             .False => self.emitOpCode(.False),
@@ -374,7 +386,8 @@ const CompileContext = struct {
             self.errorAtPrevious("Expect expression.");
             return;
         };
-        prefix_rule(self);
+        const canAssign = @enumToInt(precedence) <= @enumToInt(Precedence.Assignment);
+        prefix_rule(self, canAssign);
         while (@enumToInt(precedence) <= @enumToInt(ParseRule.get(self.parser.current.type).precedence)) {
             self.advance();
             const rule1 = ParseRule.get(self.parser.previous.type);
@@ -384,7 +397,11 @@ const CompileContext = struct {
                 self.parser.hadError = true;
                 return;
             };
-            infix_rule(self);
+            infix_rule(self, canAssign);
+        }
+
+        if (canAssign and self.match(.Equal)) {
+            self.errorAtPrevious("Invalid assignment target.");
         }
     }
 
