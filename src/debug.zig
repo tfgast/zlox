@@ -27,6 +27,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .JumpIfFalse => {
             return jumpInstruction("OP_JUMP_IF_FALSE", 1, c, offset);
         },
+        .Loop => {
+            return jumpInstruction("OP_LOOP", -1, c, offset);
+        },
         .Return => return simpleInstruction("OP_RETURN", offset),
         .Constant => {
             return constantInstruction("OP_CONSTANT", c, offset);

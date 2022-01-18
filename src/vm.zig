@@ -155,7 +155,6 @@ const ExecutionContext = struct {
                 .Print => {
                     value.print(self.pop());
                     std.debug.print("\n", .{});
-                    return;
                 },
                 .Jump => {
                     const offset = self.read_short();
@@ -166,6 +165,10 @@ const ExecutionContext = struct {
                     if (self.peek(0).isFalsey()) {
                         self.ip += offset;
                     }
+                },
+                .Loop => {
+                    const offset = self.read_short();
+                    self.ip -= offset;
                 },
                 .Return => {
                     return;

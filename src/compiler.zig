@@ -51,6 +51,8 @@ const ParseRule = struct {
         const number = CompileContext.number;
         const string = CompileContext.string;
         const variable = CompileContext.variable;
+        const and_ = CompileContext.and_;
+        const or_ = CompileContext.or_;
         return switch (ty) {
             .LeftParen => .{ .prefix = grouping, .infix = null, .precedence = .None },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -74,7 +76,7 @@ const ParseRule = struct {
             .Identifier => .{ .prefix = variable, .infix = null, .precedence = .None },
             .String => .{ .prefix = string, .infix = null, .precedence = .None },
             .Number => .{ .prefix = number, .infix = null, .precedence = .None },
-            .And => .{ .prefix = null, .infix = null, .precedence = .None },
+            .And => .{ .prefix = null, .infix = and_, .precedence = .And },
             .Class => .{ .prefix = null, .infix = null, .precedence = .None },
             .Else => .{ .prefix = null, .infix = null, .precedence = .None },
             .False => .{ .prefix = literal, .infix = null, .precedence = .None },
@@ -82,7 +84,7 @@ const ParseRule = struct {
             .Fun => .{ .prefix = null, .infix = null, .precedence = .None },
             .If => .{ .prefix = null, .infix = null, .precedence = .None },
             .Nil => .{ .prefix = literal, .infix = null, .precedence = .None },
-            .Or => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Or => .{ .prefix = null, .infix = or_, .precedence = .Or },
             .Print => .{ .prefix = null, .infix = null, .precedence = .None },
             .Return => .{ .prefix = null, .infix = null, .precedence = .None },
             .Super => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -195,6 +197,17 @@ const CompileContext = struct {
         self.emitByte(byte2);
     }
 
+    fn emitLoop(self: *Self, loopStart: usize) void {
+        self.emitOpCode(.Loop);
+
+        const jump = self.currentChunk().code.len - loopStart + 2;
+        if (jump > 0xffff) {
+            self.errorAtPrevious("Loop body too large.");
+        }
+        self.emitByte(@intCast(u8, (jump >> 8) & 0xff));
+        self.emitByte(@intCast(u8, jump & 0xff));
+    }
+
     fn emitJump(self: *Self, instruction: OpCode) usize {
         self.emitOpCode(instruction);
         self.emitByte(0xff);
@@ -304,6 +317,8 @@ const CompileContext = struct {
             self.printStatement();
         } else if (self.match(.If)) {
             self.ifStatement();
+        } else if (self.match(.While)) {
+            self.whileStatement();
         } else if (self.match(.LeftBrace)) {
             self.beginScope();
             self.block();
@@ -334,6 +349,21 @@ const CompileContext = struct {
     fn expressionStatement(self: *Self) void {
         self.expression();
         self.consume(.Semicolon, "Expect ';' after value.");
+        self.emitOpCode(.Pop);
+    }
+
+    fn whileStatement(self: *Self) void {
+        const loopStart = self.currentChunk().code.len;
+        self.consume(.LeftParen, "Expect '(' after 'while'.");
+        self.expression();
+        self.consume(.RightParen, "Expect ')' after condition.");
+
+        const exitJump = self.emitJump(.JumpIfFalse);
+        self.emitOpCode(.Pop);
+        self.statement();
+        self.emitLoop(loopStart);
+
+        self.patchJump(exitJump);
         self.emitOpCode(.Pop);
     }
 
@@ -564,6 +594,28 @@ const CompileContext = struct {
         }
         self.emitOpCode(.DefineGlobal);
         self.emitByte(global);
+    }
+
+    fn and_(self: *Self, canAssign: bool) void {
+        _ = canAssign;
+        const endJump = self.emitJump(.JumpIfFalse);
+
+        self.emitOpCode(.Pop);
+        self.parsePrecedence(.And);
+
+        self.patchJump(endJump);
+    }
+
+    fn or_(self: *Self, canAssign: bool) void {
+        _ = canAssign;
+        const elseJump = self.emitJump(.JumpIfFalse);
+        const endJump = self.emitJump(.Jump);
+
+        self.patchJump(elseJump);
+        self.emitOpCode(.Pop);
+
+        self.parsePrecedence(.Or);
+        self.patchJump(endJump);
     }
 
     fn markInitialized(self: *Self) void {
