@@ -180,16 +180,26 @@ const CompileContext = struct {
             return self.errorAtPrevious("Too much bytecode");
         };
     }
+
     fn emitOpCode(self: *Self, opCode: OpCode) void {
         self.emitByte(@enumToInt(opCode));
     }
+
     fn emitOpCodes(self: *Self, opCode1: OpCode, opCode2: OpCode) void {
         self.emitOpCode(opCode1);
         self.emitOpCode(opCode2);
     }
+
     fn emitBytes(self: *Self, byte1: u8, byte2: u8) void {
         self.emitByte(byte1);
         self.emitByte(byte2);
+    }
+
+    fn emitJump(self: *Self, instruction: OpCode) usize {
+        self.emitOpCode(instruction);
+        self.emitByte(0xff);
+        self.emitByte(0xff);
+        return self.currentChunk().code.len - 2;
     }
 
     fn emitReturn(self: *Self) void {
@@ -200,6 +210,15 @@ const CompileContext = struct {
         self.currentChunk().writeConstant(value, self.parser.previous.line) catch {
             return self.errorAtPrevious("Too many constants");
         };
+    }
+
+    fn patchJump(self: *Self, offset: usize) void {
+        const jump = self.currentChunk().code.len - offset - 2;
+        if (jump > 0xffff) {
+            self.errorAtPrevious("Too much code to jump over.");
+        }
+        self.currentChunk().code[offset] = @intCast(u8, (jump >> 8) & 0xff);
+        self.currentChunk().code[offset + 1] = @intCast(u8, jump & 0xff);
     }
 
     fn beginScope(self: *Self) void {
@@ -283,6 +302,8 @@ const CompileContext = struct {
     fn statement(self: *Self) void {
         if (self.match(.Print)) {
             self.printStatement();
+        } else if (self.match(.If)) {
+            self.ifStatement();
         } else if (self.match(.LeftBrace)) {
             self.beginScope();
             self.block();
@@ -314,6 +335,27 @@ const CompileContext = struct {
         self.expression();
         self.consume(.Semicolon, "Expect ';' after value.");
         self.emitOpCode(.Pop);
+    }
+
+    fn ifStatement(self: *Self) void {
+        self.consume(.LeftParen, "Expect '(' after if.");
+        self.expression();
+        self.consume(.RightParen, "Expect ')' after condition.");
+
+        const thenJump = self.emitJump(.JumpIfFalse);
+        self.emitOpCode(.Pop);
+        self.statement();
+
+        const elseJump = self.emitJump(.Jump);
+
+        self.patchJump(thenJump);
+        self.emitOpCode(.Pop);
+
+        if (self.match(.Else)) {
+            self.statement();
+        }
+
+        self.patchJump(elseJump);
     }
 
     fn grouping(self: *Self, canAssign: bool) void {

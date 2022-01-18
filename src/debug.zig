@@ -21,6 +21,12 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
     const instruction = c.code[offset];
     switch (@intToEnum(chunk.OpCode, instruction)) {
         .Print => return simpleInstruction("OP_PRINT", offset),
+        .Jump => {
+            return jumpInstruction("OP_JUMP", 1, c, offset);
+        },
+        .JumpIfFalse => {
+            return jumpInstruction("OP_JUMP_IF_FALSE", 1, c, offset);
+        },
         .Return => return simpleInstruction("OP_RETURN", offset),
         .Constant => {
             return constantInstruction("OP_CONSTANT", c, offset);
@@ -114,4 +120,11 @@ fn constantLongInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usi
     value.print(c.constants.values[constant]);
     print("'\n", .{});
     return offset + 4;
+}
+
+fn jumpInstruction(name: []const u8, sign: i8, c: *chunk.Chunk, offset: usize) usize {
+    const jump = (@intCast(u16, c.code[offset + 1]) << 8) | @intCast(u16, c.code[offset + 2]);
+    const new_offset = if (sign > 0) offset + 3 + jump else offset + 3 - jump;
+    print("{s:<16} {d: >4} -> {d}\n", .{ name, offset, new_offset });
+    return offset + 3;
 }

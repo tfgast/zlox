@@ -114,6 +114,13 @@ const ExecutionContext = struct {
         return b;
     }
 
+    fn read_short(self: *Self) u16 {
+        const b1 = self.ip[0];
+        const b0 = self.ip[1];
+        self.ip += 2;
+        return (@intCast(u16, b1) << 8) | @intCast(u16, b0);
+    }
+
     fn read_constant(self: *Self) Value {
         return self.chunk.constants.values[self.read_byte()];
     }
@@ -149,6 +156,16 @@ const ExecutionContext = struct {
                     value.print(self.pop());
                     std.debug.print("\n", .{});
                     return;
+                },
+                .Jump => {
+                    const offset = self.read_short();
+                    self.ip += offset;
+                },
+                .JumpIfFalse => {
+                    const offset = self.read_short();
+                    if (self.peek(0).isFalsey()) {
+                        self.ip += offset;
+                    }
                 },
                 .Return => {
                     return;
@@ -243,7 +260,7 @@ const ExecutionContext = struct {
                     try self.binaryOp(div);
                 },
                 .Not => {
-                    self.push(.{ .boolean = !self.pop().isFalsey() });
+                    self.push(.{ .boolean = self.pop().isFalsey() });
                 },
                 .Negate => {
                     if (self.peek(0) != .number) {

@@ -17,9 +17,9 @@ pub const Value = union(ValueType) {
 
     pub fn isFalsey(self: Value) bool {
         return switch (self) {
-            .boolean => |boolean| boolean,
-            .nil => false,
-            else => true,
+            .boolean => |boolean| !boolean,
+            .nil => true,
+            else => false,
         };
     }
 
