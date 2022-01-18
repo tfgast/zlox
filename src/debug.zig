@@ -40,6 +40,12 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .Pop => {
             return simpleInstruction("OP_POP", offset);
         },
+        .GetLocal => {
+            return byteInstruction("OP_GET_LOCAL", c, offset);
+        },
+        .SetLocal => {
+            return byteInstruction("OP_SET_LOCAL", c, offset);
+        },
         .GetGlobal => {
             return constantInstruction("OP_GET_GLOBAL", c, offset);
         },
@@ -86,6 +92,12 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
 fn simpleInstruction(name: []const u8, offset: usize) usize {
     print("{s}\n", .{name});
     return offset + 1;
+}
+
+fn byteInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {
+    const slot = c.code[offset + 1];
+    print("{s:<16} {d: >4}\n", .{ name, slot });
+    return offset + 2;
 }
 
 fn constantInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {

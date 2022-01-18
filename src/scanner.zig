@@ -1,16 +1,8 @@
 pub const Token = struct {
     const Self = Token;
-    type: TokenType,
-    str: []const u8,
-    line: u32,
-
-    pub fn empty() Self {
-        return Self{
-            .type = TokenType.Error,
-            .str = "",
-            .line = 0,
-        };
-    }
+    type: TokenType = .Error,
+    str: []const u8 = "",
+    line: u32 = 0,
 };
 
 pub const TokenType = enum {

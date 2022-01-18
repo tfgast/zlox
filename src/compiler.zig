@@ -16,10 +16,10 @@ const object = @import("object.zig");
 const ObjString = object.ObjString;
 
 const Parser = struct {
-    current: Token,
-    previous: Token,
-    hadError: bool,
-    panicMode: bool,
+    current: Token = Token{},
+    previous: Token = Token{},
+    hadError: bool = false,
+    panicMode: bool = false,
 };
 
 const Precedence = enum {
@@ -97,6 +97,13 @@ const ParseRule = struct {
 };
 pub const CompileError = error{Compile};
 
+pub const MAX_LOCALS: usize = 0x100;
+
+pub const Local = struct {
+    name: Token = .{},
+    depth: ?u8 = 0,
+};
+
 pub const Compiler = struct {
     const Self = Compiler;
 
@@ -110,7 +117,7 @@ pub const Compiler = struct {
         _ = self;
         var context = CompileContext.init(self.gc, source, chunk);
         context.advance();
-        while(!context.match(TokenType.EOF)) {
+        while (!context.match(TokenType.EOF)) {
             context.declaration();
         }
         context.endCompiler();
@@ -122,11 +129,15 @@ const CompileContext = struct {
     const Self = CompileContext;
     gc: *GarbageCollector,
     scanner: Scanner,
-    parser: Parser,
+    parser: Parser = .{},
     chunk: *Chunk,
 
+    locals: [MAX_LOCALS]Local = [_]Local{.{}} ** MAX_LOCALS,
+    local_count: usize = 0,
+    scope_depth: u8 = 0,
+
     fn init(gc: *GarbageCollector, source: []const u8, chunk: *Chunk) Self {
-        return Self{ .gc = gc, .scanner = Scanner.init(source), .parser = Parser{ .current = Token.empty(), .previous = Token.empty(), .hadError = false, .panicMode = false }, .chunk = chunk };
+        return Self{ .gc = gc, .scanner = Scanner.init(source), .chunk = chunk };
     }
 
     fn currentChunk(self: *Self) *Chunk {
@@ -191,6 +202,18 @@ const CompileContext = struct {
         };
     }
 
+    fn beginScope(self: *Self) void {
+        self.scope_depth += 1;
+    }
+
+    fn endScope(self: *Self) void {
+        self.scope_depth -= 1;
+        while (self.local_count > 0 and self.locals[self.local_count - 1].depth.? > self.scope_depth) {
+            self.emitOpCode(.Pop);
+            self.local_count -= 1;
+        }
+    }
+
     fn endCompiler(self: *Self) void {
         self.emitReturn();
         if (std.log.level == .debug) {
@@ -226,6 +249,14 @@ const CompileContext = struct {
         self.parsePrecedence(.Assignment);
     }
 
+    fn block(self: *Self) void {
+        while (!self.check(.RightBrace) and !self.check(.EOF)) {
+            self.declaration();
+        }
+
+        self.consume(.RightBrace, "Expect '}' after block.");
+    }
+
     fn declaration(self: *Self) void {
         if (self.match(.Var)) {
             self.varDeclaration();
@@ -252,6 +283,10 @@ const CompileContext = struct {
     fn statement(self: *Self) void {
         if (self.match(.Print)) {
             self.printStatement();
+        } else if (self.match(.LeftBrace)) {
+            self.beginScope();
+            self.block();
+            self.endScope();
         } else {
             self.expressionStatement();
         }
@@ -263,7 +298,7 @@ const CompileContext = struct {
             if (self.parser.previous.type == .Semicolon) return;
             switch (self.parser.current.type) {
                 .Class, .Fun, .Var, .For, .If, .While, .Print, .Return => return,
-                else => {}
+                else => {},
             }
             _ = self.advance();
         }
@@ -306,13 +341,19 @@ const CompileContext = struct {
     }
 
     fn namedVariable(self: *Self, name: Token, canAssign: bool) void {
-        const arg = self.identifierConstant(&name);
+        var getOp = OpCode.GetLocal;
+        var setOp = OpCode.SetLocal;
+        var arg = self.resolveLocal(&name) orelse init: {
+            getOp = .GetGlobal;
+            setOp = .SetGlobal;
+            break :init self.identifierConstant(&name);
+        };
         if (canAssign and self.match(.Equal)) {
             self.expression();
-            self.emitOpCode(.SetGlobal);
+            self.emitOpCode(setOp);
             self.emitByte(arg);
         } else {
-            self.emitOpCode(.GetGlobal);
+            self.emitOpCode(getOp);
             self.emitByte(arg);
         }
     }
@@ -421,14 +462,69 @@ const CompileContext = struct {
         return @intCast(u8, c);
     }
 
-    fn parseVariable(self: *Self, error_message: [] const u8) u8 {
+    fn resolveLocal(self: *Self, name: *const Token) ?u8 {
+        var i = @intCast(u8, self.local_count);
+        while (i > 0) {
+            i -= 1;
+            const local = &self.locals[i];
+            if (std.mem.eql(u8, name.str, local.name.str)) {
+                if (local.depth == null) {
+                    self.errorAtPrevious("Can't read local variable in its own initializer");
+                }
+                return i;
+            }
+        }
+        return null;
+    }
+
+    fn addLocal(self: *Self, name: Token) void {
+        if (self.local_count == MAX_LOCALS) {
+            self.errorAtPrevious("Too many local variables in function.");
+            return;
+        }
+        const local = &self.locals[self.local_count];
+        self.local_count += 1;
+        local.name = name;
+        local.depth = null;
+    }
+
+    fn declareVariable(self: *Self) void {
+        if (self.scope_depth == 0) return;
+
+        const name = self.parser.previous;
+        var i = self.local_count;
+        while (i > 0) {
+            i -= 1;
+            const local = &self.locals[i];
+            if (local.depth != null and local.depth.? < self.scope_depth) {
+                break;
+            }
+            if (std.mem.eql(u8, name.str, local.name.str)) {
+                self.errorAtPrevious("Already a variable with this name in this scope.");
+            }
+        }
+        self.addLocal(name);
+    }
+
+    fn parseVariable(self: *Self, error_message: []const u8) u8 {
         self.consume(.Identifier, error_message);
+
+        self.declareVariable();
+        if (self.scope_depth > 0) return 0;
+
         return self.identifierConstant(&self.parser.previous);
     }
 
     fn defineVariable(self: *Self, global: u8) void {
+        if (self.scope_depth > 0) {
+            self.markInitialized();
+            return;
+        }
         self.emitOpCode(.DefineGlobal);
         self.emitByte(global);
     }
 
+    fn markInitialized(self: *Self) void {
+        self.locals[self.local_count - 1].depth = self.scope_depth;
+    }
 };

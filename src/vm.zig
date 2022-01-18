@@ -22,7 +22,7 @@ pub const VM = struct {
     gc: *GarbageCollector,
     compiler: Compiler,
     globals: Table,
-    stack: [STACK_MAX]Value,
+    stack: [STACK_MAX]Value = [_]Value{.nil} ** STACK_MAX,
 
     pub fn init(allocator: Allocator) !Self {
         const gc = try GarbageCollector.init(allocator);
@@ -30,7 +30,6 @@ pub const VM = struct {
             .gc = gc,
             .compiler = Compiler.init(gc),
             .globals = Table.init(gc),
-            .stack = [_]Value{.nil} ** STACK_MAX,
         };
     }
 
@@ -174,8 +173,16 @@ const ExecutionContext = struct {
                 .Pop => {
                     _ = self.pop();
                 },
+                .GetLocal => {
+                    const slot = self.read_byte();
+                    self.push(self.vm.stack[slot]);
+                },
+                .SetLocal => {
+                    const slot = self.read_byte();
+                    self.vm.stack[slot] = self.peek(0);
+                },
                 .GetGlobal => {
-                    const name = self.read_string();   
+                    const name = self.read_string();
                     if (self.vm.globals.get(name)) |v| {
                         self.push(v.*);
                     } else {
@@ -184,7 +191,7 @@ const ExecutionContext = struct {
                     }
                 },
                 .DefineGlobal => {
-                    const name = self.read_string();   
+                    const name = self.read_string();
                     _ = self.vm.globals.set(name, self.peek(0)) catch {
                         self.runtimeError("Out of Memory", .{});
                         return InterpretError.Runtime;
@@ -192,7 +199,7 @@ const ExecutionContext = struct {
                     _ = self.pop();
                 },
                 .SetGlobal => {
-                    const name = self.read_string();   
+                    const name = self.read_string();
                     const was_new = self.vm.globals.set(name, self.peek(0)) catch {
                         self.runtimeError("Out of Memory", .{});
                         return InterpretError.Runtime;
