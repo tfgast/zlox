@@ -5,6 +5,9 @@ const OpCode = @import("chunk.zig").OpCode;
 const value = @import("value.zig");
 const Value = value.Value;
 const debug = @import("debug.zig");
+const Table = @import("table.zig").Table;
+const object = @import("object.zig");
+const ObjString = object.ObjString;
 
 const Compiler = @import("compiler.zig").Compiler;
 const GarbageCollector = @import("memory.zig").GarbageCollector;
@@ -18,6 +21,7 @@ pub const VM = struct {
 
     gc: *GarbageCollector,
     compiler: Compiler,
+    globals: Table,
     stack: [STACK_MAX]Value,
 
     pub fn init(allocator: Allocator) !Self {
@@ -25,11 +29,13 @@ pub const VM = struct {
         return Self{
             .gc = gc,
             .compiler = Compiler.init(gc),
+            .globals = Table.init(gc),
             .stack = [_]Value{.nil} ** STACK_MAX,
         };
     }
 
     pub fn free(self: *Self) void {
+        self.globals.free();
         self.gc.free();
     }
 
@@ -113,6 +119,10 @@ const ExecutionContext = struct {
         return self.chunk.constants.values[self.read_byte()];
     }
 
+    fn read_string(self: *Self) *ObjString {
+        return self.read_constant().asString();
+    }
+
     fn read_constant_long(self: *Self) Value {
         const b0 = @intCast(u32, self.read_byte());
         const b1 = @intCast(u32, self.read_byte());
@@ -136,9 +146,12 @@ const ExecutionContext = struct {
             }
             const instruction = self.read_byte();
             switch (@intToEnum(OpCode, instruction)) {
-                .Return => {
+                .Print => {
                     value.print(self.pop());
                     std.debug.print("\n", .{});
+                    return;
+                },
+                .Return => {
                     return;
                 },
                 .Constant => {
@@ -157,6 +170,25 @@ const ExecutionContext = struct {
                 },
                 .False => {
                     self.push(.{ .boolean = false });
+                },
+                .Pop => {
+                    _ = self.pop();
+                },
+                .GetGlobal => {
+                    const name = self.read_string();   
+                    if (self.vm.globals.get(name)) |v| {
+                        self.push(v.*);
+                    } else {
+                        self.runtimeError("Undefined variable '{s}'", .{name.str});
+                        return InterpretError.Runtime;
+                    }
+                },
+                .DefineGlobal => {
+                    const name = self.read_string();   
+                    _ = self.vm.globals.set(name, self.peek(0)) catch {
+                        self.runtimeError("Out of Memory", .{});
+                        return InterpretError.Runtime;
+                    };
                 },
                 .Equal => {
                     const b = self.pop();

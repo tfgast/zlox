@@ -50,6 +50,7 @@ const ParseRule = struct {
         const literal = CompileContext.literal;
         const number = CompileContext.number;
         const string = CompileContext.string;
+        const variable = CompileContext.variable;
         return switch (ty) {
             .LeftParen => .{ .prefix = grouping, .infix = null, .precedence = .None },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -70,7 +71,7 @@ const ParseRule = struct {
             .GreaterEqual => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
             .Less => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
             .LessEqual => .{ .prefix = null, .infix = binary, .precedence = .Comparison },
-            .Identifier => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Identifier => .{ .prefix = variable, .infix = null, .precedence = .None },
             .String => .{ .prefix = string, .infix = null, .precedence = .None },
             .Number => .{ .prefix = number, .infix = null, .precedence = .None },
             .And => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -109,8 +110,9 @@ pub const Compiler = struct {
         _ = self;
         var context = CompileContext.init(self.gc, source, chunk);
         context.advance();
-        context.expression();
-        context.consume(TokenType.EOF, "Expect end of expression");
+        while(!context.match(TokenType.EOF)) {
+            context.declaration();
+        }
         context.endCompiler();
         return !context.parser.hadError;
     }
@@ -142,12 +144,24 @@ const CompileContext = struct {
     }
 
     fn consume(self: *Self, ty: TokenType, message: []const u8) void {
-        if (self.parser.current.type == ty) {
+        if (self.check(ty)) {
             self.advance();
             return;
         }
 
         self.errorAtCurrent(message);
+    }
+
+    fn check(self: *Self, ty: TokenType) bool {
+        return self.parser.current.type == ty;
+    }
+
+    fn match(self: *Self, ty: TokenType) bool {
+        if (!self.check(ty)) {
+            return false;
+        }
+        self.advance();
+        return true;
     }
 
     fn emitByte(self: *Self, byte: u8) void {
@@ -212,6 +226,61 @@ const CompileContext = struct {
         self.parsePrecedence(.Assignment);
     }
 
+    fn declaration(self: *Self) void {
+        if (self.match(.Var)) {
+            self.varDeclaration();
+        } else {
+            self.statement();
+        }
+        if (self.parser.panicMode) {
+            self.synchronize();
+        }
+    }
+
+    fn varDeclaration(self: *Self) void {
+        const global = self.parseVariable("Expect variable name.");
+
+        if (self.match(.Equal)) {
+            self.expression();
+        } else {
+            self.emitOpCode(.Nil);
+        }
+        self.consume(.Semicolon, "Expect ';' after variable declaration.");
+        self.defineVariable(global);
+    }
+
+    fn statement(self: *Self) void {
+        if (self.match(.Print)) {
+            self.printStatement();
+        } else {
+            self.expressionStatement();
+        }
+    }
+
+    fn synchronize(self: *Self) void {
+        self.parser.panicMode = false;
+        while (self.parser.current.type != .EOF) {
+            if (self.parser.previous.type == .Semicolon) return;
+            switch (self.parser.current.type) {
+                .Class, .Fun, .Var, .For, .If, .While, .Print, .Return => return,
+                else => {}
+            }
+            _ = self.advance();
+        }
+    }
+
+    fn printStatement(self: *Self) void {
+        self.expression();
+        self.consume(.Semicolon, "Expect ';' after value.");
+        self.emitOpCode(.Print);
+    }
+
+    fn expressionStatement(self: *Self) void {
+        self.expression();
+        self.consume(.Semicolon, "Expect ';' after value.");
+        self.emitOpCode(.Pop);
+    }
+
     fn grouping(self: *Self) void {
         self.expression();
         self.consume(.RightParen, "Expect ')' after expression.");
@@ -231,6 +300,16 @@ const CompileContext = struct {
             return self.errorAtPrevious("Could not allocate memory for string");
         };
         self.emitConstant(.{ .obj = value.toObj() });
+    }
+
+    fn namedVariable(self: *Self, name: Token) void {
+        const arg = self.identifierConstant(&name);
+        self.emitOpCode(.GetGlobal);
+        self.emitByte(arg);
+    }
+
+    fn variable(self: *Self) void {
+        self.namedVariable(self.parser.previous);
     }
 
     fn unary(self: *Self) void {
@@ -308,4 +387,31 @@ const CompileContext = struct {
             infix_rule(self);
         }
     }
+
+    fn identifierConstant(self: *Self, name: *const Token) u8 {
+        const value = self.gc.copyString(name.str) catch {
+            self.errorAtPrevious("Could not allocate memory for identifier");
+            return 0;
+        };
+        const c = self.currentChunk().addConstant(.{ .obj = value.toObj() }) catch {
+            self.errorAtPrevious("Could not allocate memory for identifier");
+            return 0;
+        };
+        if (c > 0xff) {
+            self.errorAtPrevious("Too many constants in one chunk");
+            return 0;
+        }
+        return @intCast(u8, c);
+    }
+
+    fn parseVariable(self: *Self, error_message: [] const u8) u8 {
+        self.consume(.Identifier, error_message);
+        return self.identifierConstant(&self.parser.previous);
+    }
+
+    fn defineVariable(self: *Self, global: u8) void {
+        self.emitOpCode(.DefineGlobal);
+        self.emitByte(global);
+    }
+
 };

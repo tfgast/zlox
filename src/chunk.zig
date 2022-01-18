@@ -5,7 +5,7 @@ const value = @import("value.zig");
 const Allocator = std.mem.Allocator;
 
 // Declare an enum.
-pub const OpCode = enum(u8) { Constant, ConstantLong, Nil, True, False, Equal, Greater, Less, Add, Subtract, Multiply, Divide, Not, Negate, Return, _ };
+pub const OpCode = enum(u8) { Constant, ConstantLong, Nil, True, False, Pop, GetGlobal, DefineGlobal, Equal, Greater, Less, Add, Subtract, Multiply, Divide, Not, Negate, Print, Return, _ };
 
 pub const Chunk = struct {
     constants: value.Array,

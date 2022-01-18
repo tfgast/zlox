@@ -20,6 +20,7 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
     }
     const instruction = c.code[offset];
     switch (@intToEnum(chunk.OpCode, instruction)) {
+        .Print => return simpleInstruction("OP_PRINT", offset),
         .Return => return simpleInstruction("OP_RETURN", offset),
         .Constant => {
             return constantInstruction("OP_CONSTANT", c, offset);
@@ -35,6 +36,15 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         },
         .False => {
             return simpleInstruction("OP_FALSE", offset);
+        },
+        .Pop => {
+            return simpleInstruction("OP_POP", offset);
+        },
+        .GetGlobal => {
+            return constantInstruction("OP_GET_GLOBAL", c, offset);
+        },
+        .DefineGlobal => {
+            return constantInstruction("OP_DEFINE_GLOBAL", c, offset);
         },
         .Equal => {
             return simpleInstruction("OP_EQUAL", offset);

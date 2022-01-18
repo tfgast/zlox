@@ -31,16 +31,15 @@ pub const Table = struct {
         self.count = 0;
     }
 
-    pub fn get(self: *const Self, key: *ObjString, v: *Value) bool {
+    pub fn get(self: *const Self, key: *ObjString) ?*Value {
         if (self.count == 0) {
-            return false;
+            return null;
         }
         const entry = Self.findEntry(self.entries, key);
         if (entry.key == null) {
-            return false;
+            return null;
         }
-        v.* = entry.value;
-        return true;
+        return &entry.value;
     }
 
     pub fn set(self: *Self, key: *ObjString, v: Value) !bool {
