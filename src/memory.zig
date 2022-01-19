@@ -3,11 +3,13 @@ const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
 const Table = @import("table.zig").Table;
+const Chunk = @import("chunk.zig").Chunk;
 
 const object = @import("object.zig");
 const Obj = object.Obj;
 const ObjType = object.ObjType;
 const ObjString = object.ObjString;
+const ObjFunction = object.ObjFunction;
 
 pub fn grow_capacity(capacity: usize) usize {
     if (capacity < 8) {
@@ -45,13 +47,26 @@ pub const GarbageCollector = struct {
                 comptime {
                     assert(T == ObjString);
                 }
-                var string = try self.allocator.create(ObjString);
-                string.obj.type = .String;
-                string.obj.next = self.objects;
-                self.objects = string.toObj();
-                return string;
+            },
+            .Function => {
+                comptime {
+                    assert(T == ObjFunction);
+                }
             },
         }
+        var o = try self.allocator.create(T);
+        o.obj.type = ty;
+        o.obj.next = self.objects;
+        self.objects = o.toObj();
+        return o;
+    }
+
+    pub fn newFunction(self: *Self) !*ObjFunction {
+        const function = try self.allocateObject(ObjFunction, .Function);
+        function.arity = 0;
+        function.name = null;
+        function.chunk = Chunk.init(self.allocator);
+        return function;
     }
 
     pub fn copyString(self: *Self, chars: []const u8) !*ObjString {
@@ -99,12 +114,20 @@ pub const GarbageCollector = struct {
             .String => {
                 self.freeString(obj.asString());
             },
+            .Function => {
+                self.freeFunction(obj.asFunction());
+            },
         }
     }
 
     pub fn freeString(self: *Self, string: *ObjString) void {
         self.allocator.free(string.str);
         self.allocator.destroy(string);
+    }
+
+    pub fn freeFunction(self: *Self, function: *ObjFunction) void {
+        function.chunk.free();
+        self.allocator.destroy(function);
     }
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {

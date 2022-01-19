@@ -14,12 +14,14 @@ const TokenType = scanner.TokenType;
 
 const object = @import("object.zig");
 const ObjString = object.ObjString;
+const ObjFunction = object.ObjFunction;
 
 const Parser = struct {
     current: Token = Token{},
     previous: Token = Token{},
     hadError: bool = false,
     panicMode: bool = false,
+    scanner: Scanner,
 };
 
 const Precedence = enum {
@@ -97,7 +99,7 @@ const ParseRule = struct {
         };
     }
 };
-pub const CompileError = error{Compile};
+pub const CompileError = error{Compile, OutOfMemory};
 
 pub const MAX_LOCALS: usize = 0x100;
 
@@ -105,6 +107,11 @@ pub const Local = struct {
     name: Token = .{},
     depth: ?u8 = 0,
 };
+
+pub const FunctionType = enum {
+    Function, Script
+};
+
 
 pub const Compiler = struct {
     const Self = Compiler;
@@ -115,41 +122,46 @@ pub const Compiler = struct {
         return Self{ .gc = gc };
     }
 
-    pub fn compile(self: *Self, source: []const u8, chunk: *Chunk) CompileError!bool {
-        _ = self;
-        var context = CompileContext.init(self.gc, source, chunk);
+    pub fn compile(self: *Self, source: []const u8) CompileError!*ObjFunction {
+        var parser = Parser{.scanner = Scanner.init(source)};
+        var context = CompileContext.init(self.gc, &parser, try self.gc.newFunction(), .Script);
         context.advance();
         while (!context.match(TokenType.EOF)) {
             context.declaration();
         }
-        context.endCompiler();
-        return !context.parser.hadError;
+        const function = context.endCompiler();
+        if (parser.hadError) {
+            return CompileError.Compile;
+        } else {
+            return function;
+        }
     }
 };
 
 const CompileContext = struct {
     const Self = CompileContext;
     gc: *GarbageCollector,
-    scanner: Scanner,
-    parser: Parser = .{},
-    chunk: *Chunk,
+    parser: *Parser,
+
+    function: *ObjFunction,
+    type: FunctionType,
 
     locals: [MAX_LOCALS]Local = [_]Local{.{}} ** MAX_LOCALS,
-    local_count: usize = 0,
+    local_count: usize = 1,
     scope_depth: u8 = 0,
 
-    fn init(gc: *GarbageCollector, source: []const u8, chunk: *Chunk) Self {
-        return Self{ .gc = gc, .scanner = Scanner.init(source), .chunk = chunk };
+    fn init(gc: *GarbageCollector, parser: *Parser, function: *ObjFunction, ty: FunctionType) Self {
+        return Self{ .gc = gc, .parser = parser, .function = function, .type = ty };
     }
 
     fn currentChunk(self: *Self) *Chunk {
-        return self.chunk;
+        return &self.function.chunk;
     }
 
     fn advance(self: *Self) void {
         self.parser.previous = self.parser.current;
         while (true) {
-            self.parser.current = self.scanner.scanToken();
+            self.parser.current = self.parser.scanner.scanToken();
             // std.debug.print("Scanning: {} {s} {}\n", self.parser.current);
             if (self.parser.current.type != .Error) break;
             self.errorAtCurrent(self.parser.current.str);
@@ -246,13 +258,16 @@ const CompileContext = struct {
         }
     }
 
-    fn endCompiler(self: *Self) void {
+    fn endCompiler(self: *Self) *ObjFunction {
         self.emitReturn();
+        const function = self.function;
         if (std.log.level == .debug) {
             if (!self.parser.hadError) {
-                @import("debug.zig").disassembleChunk(self.currentChunk(), "code");
+                const name = if (function.name) |n| n.str else "<script>";
+                @import("debug.zig").disassembleChunk(self.currentChunk(), name);
             }
         }
+        return function;
     }
 
     fn errorAtCurrent(self: *Self, message: []const u8) void {

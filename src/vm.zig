@@ -8,13 +8,21 @@ const debug = @import("debug.zig");
 const Table = @import("table.zig").Table;
 const object = @import("object.zig");
 const ObjString = object.ObjString;
+const ObjFunction = object.ObjFunction;
 
 const Compiler = @import("compiler.zig").Compiler;
 const GarbageCollector = @import("memory.zig").GarbageCollector;
 const Allocator = std.mem.Allocator;
 
-const InterpretError = error{ Compile, Runtime } || std.os.WriteError;
-const STACK_MAX = 256;
+const InterpretError = error{ OutOfMemory, Compile, Runtime } || std.os.WriteError;
+const FRAMES_MAX = 64;
+const STACK_MAX = FRAMES_MAX * 256;
+
+const CallFrame = struct {
+    function: *ObjFunction,
+    ip: [*]u8,
+    slots: [*]Value,
+};
 
 pub const VM = struct {
     const Self = VM;
@@ -23,6 +31,8 @@ pub const VM = struct {
     compiler: Compiler,
     globals: Table,
     stack: [STACK_MAX]Value = [_]Value{.nil} ** STACK_MAX,
+    frames: [FRAMES_MAX]CallFrame,
+    frame_count: usize = 0,
 
     pub fn init(allocator: Allocator) !Self {
         const gc = try GarbageCollector.init(allocator);
@@ -30,6 +40,7 @@ pub const VM = struct {
             .gc = gc,
             .compiler = Compiler.init(gc),
             .globals = Table.init(gc),
+            .frames = undefined,
         };
     }
 
@@ -39,12 +50,9 @@ pub const VM = struct {
     }
 
     pub fn interpret(self: *Self, source: []u8) InterpretError!void {
-        var chunk = Chunk.init(self.gc.allocator);
-        defer chunk.free();
-        if (try self.compiler.compile(source, &chunk)) {
-            var c = ExecutionContext{ .vm = self, .chunk = &chunk, .ip = chunk.code.ptr, .stack_top = &self.stack };
-            try c.run();
-        }
+        const function = try self.compiler.compile(source);
+        var c = ExecutionContext.init(self, function);
+        try c.run();
     }
 };
 
@@ -76,19 +84,32 @@ const ExecutionContext = struct {
     const Self = ExecutionContext;
 
     vm: *VM,
-    chunk: *Chunk,
-    ip: [*]u8,
     stack_top: [*]Value,
+    frame: [*]CallFrame,
+
+    fn init(vm: *VM, function: *ObjFunction) Self {
+        const base_frame : [*]CallFrame = &vm.frames;
+        var frame = base_frame + vm.frame_count;
+        vm.frame_count += 1;
+        frame[0].function = function;
+        frame[0].ip = function.chunk.code.ptr;
+        frame[0].slots = &vm.stack;
+        var r = Self{ .vm = vm, .stack_top = &vm.stack, .frame = frame };
+        r.push(.{.obj = function.toObj()});
+        return r;
+    }
 
     fn resetStack(self: *Self) void {
         self.stack_top = &self.vm.stack;
+        self.vm.frame_count = 0;
     }
 
     fn runtimeError(self: *Self, comptime format: []const u8, args: anytype) void {
         std.debug.print(format, args);
         std.debug.print("\n", .{});
-        const offset = @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.ptr) - 1;
-        const line = self.chunk.getLine(offset);
+        const frame = &self.vm.frames[self.vm.frame_count - 1];
+        const offset = @ptrToInt(frame.ip) - @ptrToInt(frame.function.chunk.code.ptr) - 1;
+        const line = frame.function.chunk.getLine(offset);
         std.debug.print("[line {d}] in script\n", .{line});
         self.resetStack();
     }
@@ -109,20 +130,20 @@ const ExecutionContext = struct {
     }
 
     fn read_byte(self: *Self) u8 {
-        const b = self.ip[0];
-        self.ip += 1;
+        const b = self.frame[0].ip[0];
+        self.frame[0].ip += 1;
         return b;
     }
 
     fn read_short(self: *Self) u16 {
-        const b1 = self.ip[0];
-        const b0 = self.ip[1];
-        self.ip += 2;
+        const b1 = self.frame[0].ip[0];
+        const b0 = self.frame[0].ip[1];
+        self.frame[0].ip += 2;
         return (@intCast(u16, b1) << 8) | @intCast(u16, b0);
     }
 
     fn read_constant(self: *Self) Value {
-        return self.chunk.constants.values[self.read_byte()];
+        return self.frame[0].function.chunk.constants.values[self.read_byte()];
     }
 
     fn read_string(self: *Self) *ObjString {
@@ -133,10 +154,12 @@ const ExecutionContext = struct {
         const b0 = @intCast(u32, self.read_byte());
         const b1 = @intCast(u32, self.read_byte());
         const b2 = @intCast(u32, self.read_byte());
-        return self.chunk.constants.values[(b2 << 16) | (b1 << 8) | b0];
+        return self.frame[0].function.chunk.constants.values[(b2 << 16) | (b1 << 8) | b0];
     }
 
     fn run(self: *Self) InterpretError!void {
+        var base_frame : [*]CallFrame = &self.vm.frames;
+        self.frame = base_frame + (self.vm.frame_count - 1);
         while (true) {
             if (builtin.mode == std.builtin.Mode.Debug) {
                 std.debug.print("          ", .{});
@@ -148,7 +171,7 @@ const ExecutionContext = struct {
                     std.debug.print(" ]", .{});
                 }
                 std.debug.print("\n", .{});
-                _ = debug.disassembleInstruction(self.chunk, @ptrToInt(self.ip) - @ptrToInt(self.chunk.code.ptr));
+                _ = debug.disassembleInstruction(&self.frame[0].function.chunk, @ptrToInt(self.frame[0].ip) - @ptrToInt(self.frame[0].function.chunk.code.ptr));
             }
             const instruction = self.read_byte();
             switch (@intToEnum(OpCode, instruction)) {
@@ -158,17 +181,17 @@ const ExecutionContext = struct {
                 },
                 .Jump => {
                     const offset = self.read_short();
-                    self.ip += offset;
+                    self.frame[0].ip += offset;
                 },
                 .JumpIfFalse => {
                     const offset = self.read_short();
                     if (self.peek(0).isFalsey()) {
-                        self.ip += offset;
+                        self.frame[0].ip += offset;
                     }
                 },
                 .Loop => {
                     const offset = self.read_short();
-                    self.ip -= offset;
+                    self.frame[0].ip -= offset;
                 },
                 .Return => {
                     return;
@@ -195,11 +218,11 @@ const ExecutionContext = struct {
                 },
                 .GetLocal => {
                     const slot = self.read_byte();
-                    self.push(self.vm.stack[slot]);
+                    self.push(self.frame[0].slots[slot]);
                 },
                 .SetLocal => {
                     const slot = self.read_byte();
-                    self.vm.stack[slot] = self.peek(0);
+                    self.frame[0].slots[slot] = self.peek(0);
                 },
                 .GetGlobal => {
                     const name = self.read_string();
