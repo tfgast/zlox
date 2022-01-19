@@ -3,7 +3,7 @@ const Chunk = @import("chunk.zig").Chunk;
 const Value = @import("value.zig").Value;
 const RuntimeError = @import("vm.zig").RuntimeError;
 
-pub const ObjType = enum { String, Function, Native };
+pub const ObjType = enum { String, Closure, Function, Native, Upvalue };
 
 pub const Obj = struct {
     const Self = Obj;
@@ -25,6 +25,16 @@ pub const Obj = struct {
         return @ptrCast(*ObjNative, self);
     }
 
+    pub fn asClosure(self: *Self) *ObjClosure {
+        std.debug.assert(self.type == .Closure);
+        return @ptrCast(*ObjClosure, self);
+    }
+
+    pub fn asUpvalue(self: *Self) *ObjUpvalue {
+        std.debug.assert(self.type == .Upvalue);
+        return @ptrCast(*ObjUpvalue, self);
+    }
+
     pub fn asStringBytes(self: *Self) []u8 {
         return self.asString().str;
     }
@@ -37,8 +47,14 @@ pub const Obj = struct {
             .Function => {
                 self.asFunction().print();
             },
+            .Closure => {
+                self.asClosure().function.print();
+            },
             .Native => {
                 std.debug.print("<native fn>", .{});
+            },
+            .Upvalue => {
+                std.debug.print("upvalue", .{});
             },
         }
     }
@@ -51,7 +67,7 @@ pub const ObjString = struct {
     str: []u8,
     hash: u32,
 
-    pub fn toObj(self: *Self) *Obj {
+    pub fn asObj(self: *Self) *Obj {
         return &self.obj;
     }
 };
@@ -61,10 +77,11 @@ pub const ObjFunction = struct {
 
     obj: Obj,
     arity: u8,
+    upvalue_count: u8,
     chunk: Chunk,
     name: ?*ObjString,
 
-    pub fn toObj(self: *Self) *Obj {
+    pub fn asObj(self: *Self) *Obj {
         return &self.obj;
     }
 
@@ -85,7 +102,30 @@ pub const ObjNative = struct {
     obj: Obj,
     function: NativeFn,
 
-    pub fn toObj(self: *Self) *Obj {
+    pub fn asObj(self: *Self) *Obj {
+        return &self.obj;
+    }
+};
+
+pub const ObjClosure = struct {
+    const Self = ObjClosure;
+
+    obj: Obj,
+    function: *ObjFunction,
+    upvalues: []?*ObjUpvalue,
+
+    pub fn asObj(self: *Self) *Obj {
+        return &self.obj;
+    }
+};
+
+pub const ObjUpvalue = struct {
+    const Self = ObjUpvalue;
+
+    obj: Obj,
+    location: *Value,
+
+    pub fn asObj(self: *Self) *Obj {
         return &self.obj;
     }
 };

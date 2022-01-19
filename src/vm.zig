@@ -9,6 +9,8 @@ const Table = @import("table.zig").Table;
 const object = @import("object.zig");
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
+const ObjClosure = object.ObjClosure;
+const ObjUpvalue = object.ObjUpvalue;
 const NativeFn = object.NativeFn;
 
 const Compiler = @import("compiler.zig").Compiler;
@@ -22,7 +24,7 @@ const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * 256;
 
 const CallFrame = struct {
-    function: *ObjFunction,
+    closure: *ObjClosure,
     ip: [*]u8,
     slots: [*]Value,
 };
@@ -57,9 +59,18 @@ pub const VM = struct {
 
     pub fn interpret(self: *Self, source: []u8) InterpretError!void {
         var c = ExecutionContext.init(self);
+        if (builtin.mode == std.builtin.Mode.Debug) {
+            std.debug.print("== Compiling ==\n", .{});
+        }
         const function = try self.compiler.compile(source);
-        c.push(.{ .obj = function.toObj() });
-        _ = c.call(function, 0);
+        c.push(.{ .obj = function.asObj() });
+        const closure = try self.gc.newClosure(function);
+        _ = c.pop();
+        c.push(.{ .obj = closure.asObj() });
+        _ = c.call(closure, 0);
+        if (builtin.mode == std.builtin.Mode.Debug) {
+            std.debug.print("== Running ==\n", .{});
+        }
         try c.run();
     }
 };
@@ -112,9 +123,9 @@ const ExecutionContext = struct {
         while (i > 0) {
             i -= 1;
             const frame = &self.vm.frames[i];
-            const function = frame.function;
+            const function = frame.closure.function;
             const offset = @ptrToInt(frame.ip) - @ptrToInt(function.chunk.code.ptr) - 1;
-            const line = frame.function.chunk.getLine(offset);
+            const line = frame.closure.function.chunk.getLine(offset);
             std.debug.print("[line {d}] in ", .{line});
             function.print();
             std.debug.print("\n", .{});
@@ -124,9 +135,9 @@ const ExecutionContext = struct {
 
     fn defineNative(self: *Self, name: []const u8, function: NativeFn) InterpretError!void {
         const string = try self.vm.gc.copyString(name);
-        self.push(.{ .obj = string.toObj() });
-        const native = try self.vm.gc.newNative(function); 
-        self.push(.{ .obj = native.toObj() });
+        self.push(.{ .obj = string.asObj() });
+        const native = try self.vm.gc.newNative(function);
+        self.push(.{ .obj = native.asObj() });
         _ = try self.vm.globals.set(self.peek(1).asString(), self.peek(0));
         _ = self.pop();
         _ = self.pop();
@@ -161,7 +172,7 @@ const ExecutionContext = struct {
     }
 
     fn read_constant(self: *Self) Value {
-        return self.frame[0].function.chunk.constants.values[self.read_byte()];
+        return self.frame[0].closure.function.chunk.constants.values[self.read_byte()];
     }
 
     fn read_string(self: *Self) *ObjString {
@@ -172,7 +183,7 @@ const ExecutionContext = struct {
         const b0 = @intCast(u32, self.read_byte());
         const b1 = @intCast(u32, self.read_byte());
         const b2 = @intCast(u32, self.read_byte());
-        return self.frame[0].function.chunk.constants.values[(b2 << 16) | (b1 << 8) | b0];
+        return self.frame[0].closure.function.chunk.constants.values[(b2 << 16) | (b1 << 8) | b0];
     }
 
     fn run(self: *Self) InterpretError!void {
@@ -189,7 +200,7 @@ const ExecutionContext = struct {
                     std.debug.print(" ]", .{});
                 }
                 std.debug.print("\n", .{});
-                _ = debug.disassembleInstruction(&self.frame[0].function.chunk, @ptrToInt(self.frame[0].ip) - @ptrToInt(self.frame[0].function.chunk.code.ptr));
+                _ = debug.disassembleInstruction(&self.frame[0].closure.function.chunk, @ptrToInt(self.frame[0].ip) - @ptrToInt(self.frame[0].closure.function.chunk.code.ptr));
             }
             const instruction = self.read_byte();
             switch (@intToEnum(OpCode, instruction)) {
@@ -229,6 +240,27 @@ const ExecutionContext = struct {
                     self.stack_top = self.frame[0].slots;
                     self.push(result);
                     self.frame = base_frame + self.frame_count - 1;
+                },
+                .Closure => {
+                    const function = self.read_constant().asFunction();
+                    const closure = self.vm.gc.newClosure(function) catch {
+                        self.runtimeError("Out of Memory", .{});
+                        return InterpretError.Runtime;
+                    };
+                    self.push(.{ .obj = closure.asObj() });
+                    for (closure.upvalues) |*upvalue| {
+                        const is_local = self.read_byte();
+                        const index = self.read_byte();
+                        if (is_local == 1) {
+                            upvalue.* = self.captureUpvalue(&self.frame[0].slots[index]) catch {
+                                self.runtimeError("Memory allocation failed.", .{});
+                                return InterpretError.Runtime;
+                            };
+                        } else {
+                            std.debug.assert(is_local == 0);
+                            upvalue.* = self.frame[0].closure.upvalues[index];
+                        }
+                    }
                 },
                 .Constant => {
                     const constant = self.read_constant();
@@ -286,6 +318,14 @@ const ExecutionContext = struct {
                         self.runtimeError("Undefined variable '{s}'", .{name});
                         return InterpretError.Runtime;
                     }
+                },
+                .GetUpvalue => {
+                    const slot = self.read_byte();
+                    self.push(self.frame[0].closure.upvalues[slot].?.location.*);
+                },
+                .SetUpvalue => {
+                    const slot = self.read_byte();
+                    self.frame[0].closure.upvalues[slot].?.location.* = self.peek(0);
                 },
                 .Equal => {
                     const b = self.pop();
@@ -360,14 +400,14 @@ const ExecutionContext = struct {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
         };
-        self.push(.{ .obj = result.toObj() });
+        self.push(.{ .obj = result.asObj() });
     }
 
     fn callValue(self: *Self, callee: Value, arg_count: u8) bool {
         switch (callee) {
             .obj => |obj| {
                 switch (obj.type) {
-                    .Function => return self.call(obj.asFunction(), arg_count),
+                    .Closure => return self.call(obj.asClosure(), arg_count),
                     .Native => {
                         const native = obj.asNative();
                         const result = native.function((self.stack_top - arg_count)[0..arg_count]) catch {
@@ -387,9 +427,9 @@ const ExecutionContext = struct {
         return false;
     }
 
-    fn call(self: *Self, function: *ObjFunction, arg_count: u8) bool {
-        if (arg_count != function.arity) {
-            self.runtimeError("Expected {d} arguments but got {d}.", .{ function.arity, arg_count });
+    fn call(self: *Self, closure: *ObjClosure, arg_count: u8) bool {
+        if (arg_count != closure.function.arity) {
+            self.runtimeError("Expected {d} arguments but got {d}.", .{ closure.function.arity, arg_count });
             return false;
         }
         if (self.frame_count == FRAMES_MAX) {
@@ -398,24 +438,29 @@ const ExecutionContext = struct {
         }
         var frame = &self.vm.frames[self.frame_count];
         self.frame_count += 1;
-        frame.function = function;
-        frame.ip = function.chunk.code.ptr;
+        frame.closure = closure;
+        frame.ip = closure.function.chunk.code.ptr;
         frame.slots = self.stack_top - arg_count - 1;
         return true;
+    }
+
+    fn captureUpvalue(self: *Self, local: *Value) InterpretError!*ObjUpvalue {
+        const created_upvalue = self.vm.gc.newUpvalue(local);
+        return created_upvalue;
     }
 };
 
 fn clockNative(values: []Value) RuntimeError!Value {
     _ = values;
-   const T = struct {
-        var timer : ?std.time.Timer = null;
-   };
-   if(T.timer) |timer| {
-        return Value{.number = @intToFloat(f64, timer.read())*1.0e-9 };
-   } else {
+    const T = struct {
+        var timer: ?std.time.Timer = null;
+    };
+    if (T.timer) |timer| {
+        return Value{ .number = @intToFloat(f64, timer.read()) * 1.0e-9 };
+    } else {
         T.timer = std.time.Timer.start() catch {
             return RuntimeError.Runtime;
         };
-        return Value{.number = 0.0};
-   }
+        return Value{ .number = 0.0 };
+    }
 }

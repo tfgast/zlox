@@ -104,10 +104,16 @@ const ParseRule = struct {
 };
 
 pub const MAX_LOCALS: usize = 0x100;
+pub const MAX_UPVALUES: usize = 0x100;
 
 pub const Local = struct {
     name: Token = .{},
     depth: ?u8 = 0,
+};
+
+pub const Upvalue = struct {
+    index: u8 = 0,
+    is_local: bool = true,
 };
 
 pub const FunctionType = enum { Function, Script };
@@ -147,6 +153,7 @@ const CompileContext = struct {
     type: FunctionType,
 
     locals: [MAX_LOCALS]Local = [_]Local{.{}} ** MAX_LOCALS,
+    upvalues: [MAX_UPVALUES]Upvalue = [_]Upvalue{.{}} ** MAX_UPVALUES,
     local_count: usize = 1,
     scope_depth: u8 = 0,
 
@@ -335,7 +342,13 @@ const CompileContext = struct {
         context.block();
 
         const f = context.endCompiler();
-        self.emitConstant(.{ .obj = f.toObj() });
+        self.emitOpCode(.Closure);
+        self.emitByte(self.makeConstant(.{ .obj = f.asObj() }));
+
+        for (context.upvalues[0..f.upvalue_count]) |upvalue| {
+            self.emitByte(if (upvalue.is_local) 1 else 0);
+            self.emitByte(upvalue.index);
+        }
     }
 
     fn declaration(self: *Self) void {
@@ -527,24 +540,30 @@ const CompileContext = struct {
         const value = self.gc.copyString(self.parser.previous.str[1..n]) catch |err| {
             return self.errorAtPrevious("Could not allocate memory for string", err);
         };
-        self.emitConstant(.{ .obj = value.toObj() });
+        self.emitConstant(.{ .obj = value.asObj() });
     }
 
     fn namedVariable(self: *Self, name: Token, canAssign: bool) void {
         var getOp = OpCode.GetLocal;
         var setOp = OpCode.SetLocal;
-        var arg = self.resolveLocal(&name) orelse init: {
+        var arg = self.resolveLocal(&name);
+        if (arg == null) {
+            getOp = .GetUpvalue;
+            setOp = .SetUpvalue;
+            arg = self.resolveUpvalue(&name);
+        }
+        if (arg == null) {
             getOp = .GetGlobal;
             setOp = .SetGlobal;
-            break :init self.identifierConstant(&name);
-        };
+            arg = self.identifierConstant(&name);
+        }
         if (canAssign and self.match(.Equal)) {
             self.expression();
             self.emitOpCode(setOp);
-            self.emitByte(arg);
+            self.emitByte(arg.?);
         } else {
             self.emitOpCode(getOp);
-            self.emitByte(arg);
+            self.emitByte(arg.?);
         }
     }
 
@@ -642,7 +661,11 @@ const CompileContext = struct {
             self.errorAtPrevious("Could not allocate memory for identifier", err);
             return 0;
         };
-        const c = self.currentChunk().addConstant(.{ .obj = value.toObj() }) catch |err| {
+        return self.makeConstant(.{ .obj = value.asObj() });
+    }
+
+    fn makeConstant(self: *Self, value: Value) u8 {
+        const c = self.currentChunk().addConstant(value) catch |err| {
             self.errorAtPrevious("Could not allocate memory for identifier", err);
             return 0;
         };
@@ -664,6 +687,34 @@ const CompileContext = struct {
                 }
                 return i;
             }
+        }
+        return null;
+    }
+
+    fn addUpvalue(self: *Self, index: u8, is_local: bool) u8 {
+        var upvalue_count = self.obj_function.upvalue_count;
+        for (self.upvalues[0..upvalue_count]) |*upvalue, i| {
+            if (upvalue.index == index and upvalue.is_local == is_local) {
+                return @intCast(u8, i);
+            }
+        }
+        if (upvalue_count == 0xff) {
+            self.errorAtPrevious("Too many closure variables in function.", CompileError.Compile);
+            return 0;
+        }
+        self.upvalues[upvalue_count].is_local = is_local;
+        self.upvalues[upvalue_count].index = index;
+        self.obj_function.upvalue_count += 1;
+        return upvalue_count;
+    }
+
+    fn resolveUpvalue(self: *Self, name: *const Token) ?u8 {
+        var enclosing = self.enclosing orelse return null;
+        if (enclosing.resolveLocal(name)) |local| {
+            return self.addUpvalue(local, true);
+        }
+        if (enclosing.resolveUpvalue(name)) |upvalue| {
+            return self.addUpvalue(upvalue, false);
         }
         return null;
     }

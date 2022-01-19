@@ -33,6 +33,27 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .Call => {
             return byteInstruction("OP_CALL", c, offset);
         },
+        .Closure => {
+            var o = offset;
+            o += 1;
+            const constant = c.code[o];
+            o += 1;
+            print("{s:<16} {d: >4} ", .{ "OP_CLOSURE", constant });
+            const v = c.constants.values[constant];
+            value.print(v);
+            print("\n", .{});
+
+            const function = v.asFunction();
+            var j: u8 = 0;
+            while (j < function.upvalue_count) : (j += 1) {
+                const is_local = if (c.code[o] == 1) "local" else "upvalue";
+                o += 1;
+                const index = c.code[o];
+                o += 1;
+                print("{d:0>4}    | |                     {s} {d}\n", .{ o - 2, is_local, index });
+            }
+            return o;
+        },
         .Return => return simpleInstruction("OP_RETURN", offset),
         .Constant => {
             return constantInstruction("OP_CONSTANT", c, offset);
@@ -66,6 +87,12 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         },
         .SetGlobal => {
             return constantInstruction("OP_SET_GLOBAL", c, offset);
+        },
+        .GetUpvalue => {
+            return byteInstruction("OP_GET_UPVALUE", c, offset);
+        },
+        .SetUpvalue => {
+            return byteInstruction("OP_SET_UPVALUE", c, offset);
         },
         .Equal => {
             return simpleInstruction("OP_EQUAL", offset);

@@ -4,12 +4,15 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Table = @import("table.zig").Table;
 const Chunk = @import("chunk.zig").Chunk;
+const Value = @import("value.zig").Value;
 
 const object = @import("object.zig");
 const Obj = object.Obj;
 const ObjType = object.ObjType;
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
+const ObjClosure = object.ObjClosure;
+const ObjUpvalue = object.ObjUpvalue;
 const ObjNative = object.ObjNative;
 const NativeFn = object.NativeFn;
 
@@ -55,24 +58,35 @@ pub const GarbageCollector = struct {
                     assert(T == ObjFunction);
                 }
             },
+            .Closure => {
+                comptime {
+                    assert(T == ObjClosure);
+                }
+            },
             .Native => {
                 comptime {
                     assert(T == ObjNative);
+                }
+            },
+            .Upvalue => {
+                comptime {
+                    assert(T == ObjUpvalue);
                 }
             },
         }
         var o = try self.allocator.create(T);
         o.obj.type = ty;
         o.obj.next = self.objects;
-        self.objects = o.toObj();
+        self.objects = o.asObj();
         return o;
     }
 
     pub fn newFunction(self: *Self) !*ObjFunction {
         const function = try self.allocateObject(ObjFunction, .Function);
         function.arity = 0;
-        function.name = null;
+        function.upvalue_count = 0;
         function.chunk = Chunk.init(self.allocator);
+        function.name = null;
         return function;
     }
 
@@ -80,6 +94,23 @@ pub const GarbageCollector = struct {
         const native = try self.allocateObject(ObjNative, .Native);
         native.function = function;
         return native;
+    }
+
+    pub fn newClosure(self: *Self, function: *ObjFunction) !*ObjClosure {
+        const upvalues = try self.allocator.alloc(?*ObjUpvalue, function.upvalue_count);
+        errdefer self.allocator.free(upvalues);
+        std.mem.set(?*ObjUpvalue, upvalues, null);
+
+        const closure = try self.allocateObject(ObjClosure, .Closure);
+        closure.function = function;
+        closure.upvalues = upvalues;
+        return closure;
+    }
+
+    pub fn newUpvalue(self: *Self, slot: *Value) !*ObjUpvalue {
+        const upvalue = try self.allocateObject(ObjUpvalue, .Upvalue);
+        upvalue.location = slot;
+        return upvalue;
     }
 
     pub fn copyString(self: *Self, chars: []const u8) !*ObjString {
@@ -133,6 +164,12 @@ pub const GarbageCollector = struct {
             .Native => {
                 self.freeNative(obj.asNative());
             },
+            .Closure => {
+                self.freeClosure(obj.asClosure());
+            },
+            .Upvalue => {
+                self.freeUpvalue(obj.asUpvalue());
+            },
         }
     }
 
@@ -146,8 +183,17 @@ pub const GarbageCollector = struct {
         self.allocator.destroy(function);
     }
 
+    pub fn freeClosure(self: *Self, closure: *ObjClosure) void {
+        self.allocator.free(closure.upvalues);
+        self.allocator.destroy(closure);
+    }
+
     pub fn freeNative(self: *Self, native: *ObjNative) void {
         self.allocator.destroy(native);
+    }
+
+    pub fn freeUpvalue(self: *Self, upvalue: *ObjUpvalue) void {
+        self.allocator.destroy(upvalue);
     }
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {
