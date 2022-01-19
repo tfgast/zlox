@@ -109,6 +109,7 @@ pub const MAX_UPVALUES: usize = 0x100;
 pub const Local = struct {
     name: Token = .{},
     depth: ?u8 = 0,
+    is_captured: bool = false,
 };
 
 pub const Upvalue = struct {
@@ -265,7 +266,11 @@ const CompileContext = struct {
     fn endScope(self: *Self) void {
         self.scope_depth -= 1;
         while (self.local_count > 0 and self.locals[self.local_count - 1].depth.? > self.scope_depth) {
-            self.emitOpCode(.Pop);
+            if (self.locals[self.local_count - 1].is_captured) {
+                self.emitOpCode(.CloseUpvalue);
+            } else {
+                self.emitOpCode(.Pop);
+            }
             self.local_count -= 1;
         }
     }
@@ -711,6 +716,7 @@ const CompileContext = struct {
     fn resolveUpvalue(self: *Self, name: *const Token) ?u8 {
         var enclosing = self.enclosing orelse return null;
         if (enclosing.resolveLocal(name)) |local| {
+            enclosing.locals[local].is_captured = true;
             return self.addUpvalue(local, true);
         }
         if (enclosing.resolveUpvalue(name)) |upvalue| {
@@ -727,6 +733,7 @@ const CompileContext = struct {
         const local = &self.locals[self.local_count];
         self.local_count += 1;
         local.name = name;
+        local.is_captured = false;
         local.depth = null;
     }
 

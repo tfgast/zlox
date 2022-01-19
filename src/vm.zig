@@ -35,6 +35,7 @@ pub const VM = struct {
     gc: *GarbageCollector,
     compiler: Compiler,
     globals: Table,
+    open_upvalues: ?*ObjUpvalue,
     stack: [STACK_MAX]Value = [_]Value{.nil} ** STACK_MAX,
     frames: [FRAMES_MAX]CallFrame,
 
@@ -44,6 +45,7 @@ pub const VM = struct {
             .gc = gc,
             .compiler = Compiler.init(gc),
             .globals = Table.init(gc),
+            .open_upvalues = null,
             .frames = undefined,
         };
         var c = ExecutionContext.init(&vm);
@@ -229,8 +231,13 @@ const ExecutionContext = struct {
                     }
                     self.frame = base_frame + self.frame_count - 1;
                 },
+                .CloseUpvalue => {
+                    self.closeUpvalues(self.stack_top - 1);
+                    _ = self.pop();
+                },
                 .Return => {
                     const result = self.pop();
+                    self.closeUpvalues(self.frame[0].slots);
                     self.frame_count -= 1;
                     if (self.frame_count == 0) {
                         _ = self.pop();
@@ -445,8 +452,37 @@ const ExecutionContext = struct {
     }
 
     fn captureUpvalue(self: *Self, local: *Value) InterpretError!*ObjUpvalue {
-        const created_upvalue = self.vm.gc.newUpvalue(local);
+        var prev_upvalue: ?*ObjUpvalue = null;
+        var upvalue = self.vm.open_upvalues;
+        while (upvalue) |u| {
+            if (u.location == local) {
+                return u;
+            }
+            if (@ptrToInt(u.location) < @ptrToInt(local)) {
+                break;
+            }
+            prev_upvalue = u;
+            upvalue = u.next;
+        }
+        const created_upvalue = try self.vm.gc.newUpvalue(local);
+        created_upvalue.next = upvalue;
+        if (prev_upvalue) |p| {
+            p.next = created_upvalue;
+        } else {
+            self.vm.open_upvalues = created_upvalue;
+        }
         return created_upvalue;
+    }
+
+    fn closeUpvalues(self: *Self, last: [*]Value) void {
+        while (self.vm.open_upvalues) |upvalue| {
+            if (@ptrToInt(upvalue.location) < @ptrToInt(last)) {
+                break;
+            }
+            upvalue.closed = upvalue.location.*;
+            upvalue.location = &upvalue.closed;
+            self.vm.open_upvalues = upvalue.next;
+        }
     }
 };
 

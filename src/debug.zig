@@ -54,6 +54,7 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
             }
             return o;
         },
+        .CloseUpvalue => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         .Return => return simpleInstruction("OP_RETURN", offset),
         .Constant => {
             return constantInstruction("OP_CONSTANT", c, offset);

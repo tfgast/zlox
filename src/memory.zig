@@ -110,6 +110,8 @@ pub const GarbageCollector = struct {
     pub fn newUpvalue(self: *Self, slot: *Value) !*ObjUpvalue {
         const upvalue = try self.allocateObject(ObjUpvalue, .Upvalue);
         upvalue.location = slot;
+        upvalue.closed = .nil;
+        upvalue.next = null;
         return upvalue;
     }
 

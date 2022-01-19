@@ -124,6 +124,8 @@ pub const ObjUpvalue = struct {
 
     obj: Obj,
     location: *Value,
+    closed: Value,
+    next: ?*ObjUpvalue,
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
