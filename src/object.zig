@@ -1,7 +1,9 @@
 const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
+const Value = @import("value.zig").Value;
+const RuntimeError = @import("vm.zig").RuntimeError;
 
-pub const ObjType = enum { String, Function };
+pub const ObjType = enum { String, Function, Native };
 
 pub const Obj = struct {
     const Self = Obj;
@@ -18,6 +20,11 @@ pub const Obj = struct {
         return @ptrCast(*ObjFunction, self);
     }
 
+    pub fn asNative(self: *Self) *ObjNative {
+        std.debug.assert(self.type == .Native);
+        return @ptrCast(*ObjNative, self);
+    }
+
     pub fn asStringBytes(self: *Self) []u8 {
         return self.asString().str;
     }
@@ -29,6 +36,9 @@ pub const Obj = struct {
             },
             .Function => {
                 self.asFunction().print();
+            },
+            .Native => {
+                std.debug.print("<native fn>", .{});
             },
         }
     }
@@ -64,5 +74,18 @@ pub const ObjFunction = struct {
         } else {
             std.debug.print("<script>", .{});
         }
+    }
+};
+
+pub const NativeFn = fn ([]Value) RuntimeError!Value;
+
+pub const ObjNative = struct {
+    const Self = ObjNative;
+
+    obj: Obj,
+    function: NativeFn,
+
+    pub fn toObj(self: *Self) *Obj {
+        return &self.obj;
     }
 };

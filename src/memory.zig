@@ -10,6 +10,8 @@ const Obj = object.Obj;
 const ObjType = object.ObjType;
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
+const ObjNative = object.ObjNative;
+const NativeFn = object.NativeFn;
 
 pub fn grow_capacity(capacity: usize) usize {
     if (capacity < 8) {
@@ -53,6 +55,11 @@ pub const GarbageCollector = struct {
                     assert(T == ObjFunction);
                 }
             },
+            .Native => {
+                comptime {
+                    assert(T == ObjNative);
+                }
+            },
         }
         var o = try self.allocator.create(T);
         o.obj.type = ty;
@@ -67,6 +74,12 @@ pub const GarbageCollector = struct {
         function.name = null;
         function.chunk = Chunk.init(self.allocator);
         return function;
+    }
+
+    pub fn newNative(self: *Self, function: NativeFn) !*ObjNative {
+        const native = try self.allocateObject(ObjNative, .Native);
+        native.function = function;
+        return native;
     }
 
     pub fn copyString(self: *Self, chars: []const u8) !*ObjString {
@@ -117,6 +130,9 @@ pub const GarbageCollector = struct {
             .Function => {
                 self.freeFunction(obj.asFunction());
             },
+            .Native => {
+                self.freeNative(obj.asNative());
+            },
         }
     }
 
@@ -128,6 +144,10 @@ pub const GarbageCollector = struct {
     pub fn freeFunction(self: *Self, function: *ObjFunction) void {
         function.chunk.free();
         self.allocator.destroy(function);
+    }
+
+    pub fn freeNative(self: *Self, native: *ObjNative) void {
+        self.allocator.destroy(native);
     }
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {

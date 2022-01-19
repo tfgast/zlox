@@ -9,13 +9,15 @@ const Table = @import("table.zig").Table;
 const object = @import("object.zig");
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
+const NativeFn = object.NativeFn;
 
 const Compiler = @import("compiler.zig").Compiler;
 const CompileError = @import("compiler.zig").CompileError;
 const GarbageCollector = @import("memory.zig").GarbageCollector;
 const Allocator = std.mem.Allocator;
 
-const InterpretError = error{Runtime} || CompileError || std.os.WriteError;
+pub const RuntimeError = error{Runtime};
+pub const InterpretError = RuntimeError || CompileError || std.os.WriteError;
 const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * 256;
 
@@ -36,12 +38,16 @@ pub const VM = struct {
 
     pub fn init(allocator: Allocator) !Self {
         const gc = try GarbageCollector.init(allocator);
-        return Self{
+        var vm = Self{
             .gc = gc,
             .compiler = Compiler.init(gc),
             .globals = Table.init(gc),
             .frames = undefined,
         };
+        var c = ExecutionContext.init(&vm);
+        _ = try clockNative(&[_]Value{});
+        try c.defineNative("clock", clockNative);
+        return vm;
     }
 
     pub fn free(self: *Self) void {
@@ -50,8 +56,10 @@ pub const VM = struct {
     }
 
     pub fn interpret(self: *Self, source: []u8) InterpretError!void {
+        var c = ExecutionContext.init(self);
         const function = try self.compiler.compile(source);
-        var c = ExecutionContext.init(self, function);
+        c.push(.{ .obj = function.toObj() });
+        _ = c.call(function, 0);
         try c.run();
     }
 };
@@ -88,11 +96,8 @@ const ExecutionContext = struct {
     frame: [*]CallFrame,
     frame_count: usize = 0,
 
-    fn init(vm: *VM, function: *ObjFunction) Self {
-        var r = Self{ .vm = vm, .stack_top = &vm.stack, .frame = &vm.frames };
-        r.push(.{ .obj = function.toObj() });
-        _ = r.call(function, 0);
-        return r;
+    fn init(vm: *VM) Self {
+        return Self{ .vm = vm, .stack_top = &vm.stack, .frame = &vm.frames };
     }
 
     fn resetStack(self: *Self) void {
@@ -115,6 +120,16 @@ const ExecutionContext = struct {
             std.debug.print("\n", .{});
         }
         self.resetStack();
+    }
+
+    fn defineNative(self: *Self, name: []const u8, function: NativeFn) InterpretError!void {
+        const string = try self.vm.gc.copyString(name);
+        self.push(.{ .obj = string.toObj() });
+        const native = try self.vm.gc.newNative(function); 
+        self.push(.{ .obj = native.toObj() });
+        _ = try self.vm.globals.set(self.peek(1).asString(), self.peek(0));
+        _ = self.pop();
+        _ = self.pop();
     }
 
     fn push(self: *Self, v: Value) void {
@@ -353,6 +368,16 @@ const ExecutionContext = struct {
             .obj => |obj| {
                 switch (obj.type) {
                     .Function => return self.call(obj.asFunction(), arg_count),
+                    .Native => {
+                        const native = obj.asNative();
+                        const result = native.function((self.stack_top - arg_count)[0..arg_count]) catch {
+                            self.runtimeError("Native function returned an error.", .{});
+                            return false;
+                        };
+                        self.stack_top -= arg_count + 1;
+                        self.push(result);
+                        return true;
+                    },
                     else => {},
                 }
             },
@@ -379,3 +404,18 @@ const ExecutionContext = struct {
         return true;
     }
 };
+
+fn clockNative(values: []Value) RuntimeError!Value {
+    _ = values;
+   const T = struct {
+        var timer : ?std.time.Timer = null;
+   };
+   if(T.timer) |timer| {
+        return Value{.number = @intToFloat(f64, timer.read())*1.0e-9 };
+   } else {
+        T.timer = std.time.Timer.start() catch {
+            return RuntimeError.Runtime;
+        };
+        return Value{.number = 0.0};
+   }
+}
