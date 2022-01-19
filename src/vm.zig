@@ -36,21 +36,25 @@ pub const VM = struct {
     compiler: Compiler,
     globals: Table,
     open_upvalues: ?*ObjUpvalue,
-    stack: [STACK_MAX]Value = [_]Value{.nil} ** STACK_MAX,
+    stack: [STACK_MAX]Value,
     frames: [FRAMES_MAX]CallFrame,
+    stack_top: [*]Value,
+    frame: [*]CallFrame,
+    frame_count: usize,
 
-    pub fn init(allocator: Allocator) !Self {
-        const gc = try GarbageCollector.init(allocator);
-        var vm = Self{
-            .gc = gc,
-            .compiler = Compiler.init(gc),
-            .globals = Table.init(gc),
-            .open_upvalues = null,
-            .frames = undefined,
-        };
-        var c = ExecutionContext.init(&vm);
+    pub fn init(allocator: Allocator) !*Self {
+        var vm = try allocator.create(Self);
+        const gc = try GarbageCollector.init(allocator, vm);
+        vm.gc = gc;
+        vm.compiler = Compiler.init(gc);
+        vm.globals = Table.init(gc);
+        vm.open_upvalues = null;
+        vm.stack_top = &vm.stack;
+        vm.frame = &vm.frames;
+        vm.frame_count = 0;
+
         _ = try clockNative(&[_]Value{});
-        try c.defineNative("clock", clockNative);
+        try vm.defineNative("clock", clockNative);
         return vm;
     }
 
@@ -60,61 +64,23 @@ pub const VM = struct {
     }
 
     pub fn interpret(self: *Self, source: []u8) InterpretError!void {
-        var c = ExecutionContext.init(self);
         if (builtin.mode == std.builtin.Mode.Debug) {
             std.debug.print("== Compiling ==\n", .{});
         }
         const function = try self.compiler.compile(source);
-        c.push(.{ .obj = function.asObj() });
+        self.push(.{ .obj = function.asObj() });
         const closure = try self.gc.newClosure(function);
-        _ = c.pop();
-        c.push(.{ .obj = closure.asObj() });
-        _ = c.call(closure, 0);
+        _ = self.pop();
+        self.push(.{ .obj = closure.asObj() });
+        _ = self.call(closure, 0);
         if (builtin.mode == std.builtin.Mode.Debug) {
             std.debug.print("== Running ==\n", .{});
         }
-        try c.run();
-    }
-};
-
-fn greater(x: f64, y: f64) Value {
-    return .{ .boolean = (x > y) };
-}
-
-fn less(x: f64, y: f64) Value {
-    return .{ .boolean = (x < y) };
-}
-
-fn add(x: f64, y: f64) Value {
-    return .{ .number = x + y };
-}
-
-fn sub(x: f64, y: f64) Value {
-    return .{ .number = x - y };
-}
-
-fn mul(x: f64, y: f64) Value {
-    return .{ .number = x * y };
-}
-
-fn div(x: f64, y: f64) Value {
-    return .{ .number = x / y };
-}
-
-const ExecutionContext = struct {
-    const Self = ExecutionContext;
-
-    vm: *VM,
-    stack_top: [*]Value,
-    frame: [*]CallFrame,
-    frame_count: usize = 0,
-
-    fn init(vm: *VM) Self {
-        return Self{ .vm = vm, .stack_top = &vm.stack, .frame = &vm.frames };
+        try self.run();
     }
 
     fn resetStack(self: *Self) void {
-        self.stack_top = &self.vm.stack;
+        self.stack_top = &self.stack;
         self.frame_count = 0;
     }
 
@@ -124,7 +90,7 @@ const ExecutionContext = struct {
         var i = self.frame_count;
         while (i > 0) {
             i -= 1;
-            const frame = &self.vm.frames[i];
+            const frame = &self.frames[i];
             const function = frame.closure.function;
             const offset = @ptrToInt(frame.ip) - @ptrToInt(function.chunk.code.ptr) - 1;
             const line = frame.closure.function.chunk.getLine(offset);
@@ -136,11 +102,11 @@ const ExecutionContext = struct {
     }
 
     fn defineNative(self: *Self, name: []const u8, function: NativeFn) InterpretError!void {
-        const string = try self.vm.gc.copyString(name);
+        const string = try self.gc.copyString(name);
         self.push(.{ .obj = string.asObj() });
-        const native = try self.vm.gc.newNative(function);
+        const native = try self.gc.newNative(function);
         self.push(.{ .obj = native.asObj() });
-        _ = try self.vm.globals.set(self.peek(1).asString(), self.peek(0));
+        _ = try self.globals.set(self.peek(1).asString(), self.peek(0));
         _ = self.pop();
         _ = self.pop();
     }
@@ -189,13 +155,13 @@ const ExecutionContext = struct {
     }
 
     fn run(self: *Self) InterpretError!void {
-        var base_frame: [*]CallFrame = &self.vm.frames;
+        var base_frame: [*]CallFrame = &self.frames;
         self.frame = base_frame + (self.frame_count - 1);
         while (true) {
             if (builtin.mode == std.builtin.Mode.Debug) {
                 std.debug.print("          ", .{});
-                const n = (@ptrToInt(self.stack_top) - @ptrToInt(&self.vm.stack)) / @sizeOf(Value);
-                var slice = self.vm.stack[0..n];
+                const n = (@ptrToInt(self.stack_top) - @ptrToInt(&self.stack)) / @sizeOf(Value);
+                var slice = self.stack[0..n];
                 for (slice) |v| {
                     std.debug.print("[ ", .{});
                     value.print(v);
@@ -250,7 +216,7 @@ const ExecutionContext = struct {
                 },
                 .Closure => {
                     const function = self.read_constant().asFunction();
-                    const closure = self.vm.gc.newClosure(function) catch {
+                    const closure = self.gc.newClosure(function) catch {
                         self.runtimeError("Out of Memory", .{});
                         return InterpretError.Runtime;
                     };
@@ -299,7 +265,7 @@ const ExecutionContext = struct {
                 },
                 .GetGlobal => {
                     const name = self.read_string();
-                    if (self.vm.globals.get(name)) |v| {
+                    if (self.globals.get(name)) |v| {
                         self.push(v.*);
                     } else {
                         self.runtimeError("Undefined variable '{s}'", .{name.str});
@@ -308,7 +274,7 @@ const ExecutionContext = struct {
                 },
                 .DefineGlobal => {
                     const name = self.read_string();
-                    _ = self.vm.globals.set(name, self.peek(0)) catch {
+                    _ = self.globals.set(name, self.peek(0)) catch {
                         self.runtimeError("Out of Memory", .{});
                         return InterpretError.Runtime;
                     };
@@ -316,12 +282,12 @@ const ExecutionContext = struct {
                 },
                 .SetGlobal => {
                     const name = self.read_string();
-                    const was_new = self.vm.globals.set(name, self.peek(0)) catch {
+                    const was_new = self.globals.set(name, self.peek(0)) catch {
                         self.runtimeError("Out of Memory", .{});
                         return InterpretError.Runtime;
                     };
                     if (was_new) {
-                        _ = self.vm.globals.delete(name);
+                        _ = self.globals.delete(name);
                         self.runtimeError("Undefined variable '{s}'", .{name});
                         return InterpretError.Runtime;
                     }
@@ -396,14 +362,14 @@ const ExecutionContext = struct {
     fn concatenate(self: *Self) InterpretError!void {
         const b = self.pop().asString();
         const a = self.pop().asString();
-        const chars = std.mem.concat(self.vm.gc.allocator, u8, &[_][]const u8{ a.str, b.str }) catch {
+        const chars = std.mem.concat(self.gc.allocator, u8, &[_][]const u8{ a.str, b.str }) catch {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
         };
         errdefer {
-            self.vm.gc.allocator.free(chars);
+            self.gc.allocator.free(chars);
         }
-        const result = self.vm.gc.takeString(chars) catch {
+        const result = self.gc.takeString(chars) catch {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
         };
@@ -443,7 +409,7 @@ const ExecutionContext = struct {
             self.runtimeError("Stack overflow.", .{});
             return false;
         }
-        var frame = &self.vm.frames[self.frame_count];
+        var frame = &self.frames[self.frame_count];
         self.frame_count += 1;
         frame.closure = closure;
         frame.ip = closure.function.chunk.code.ptr;
@@ -453,7 +419,7 @@ const ExecutionContext = struct {
 
     fn captureUpvalue(self: *Self, local: *Value) InterpretError!*ObjUpvalue {
         var prev_upvalue: ?*ObjUpvalue = null;
-        var upvalue = self.vm.open_upvalues;
+        var upvalue = self.open_upvalues;
         while (upvalue) |u| {
             if (u.location == local) {
                 return u;
@@ -464,26 +430,56 @@ const ExecutionContext = struct {
             prev_upvalue = u;
             upvalue = u.next;
         }
-        const created_upvalue = try self.vm.gc.newUpvalue(local);
+        const created_upvalue = try self.gc.newUpvalue(local);
         created_upvalue.next = upvalue;
         if (prev_upvalue) |p| {
             p.next = created_upvalue;
         } else {
-            self.vm.open_upvalues = created_upvalue;
+            self.open_upvalues = created_upvalue;
         }
         return created_upvalue;
     }
 
     fn closeUpvalues(self: *Self, last: [*]Value) void {
-        while (self.vm.open_upvalues) |upvalue| {
+        while (self.open_upvalues) |upvalue| {
             if (@ptrToInt(upvalue.location) < @ptrToInt(last)) {
                 break;
             }
             upvalue.closed = upvalue.location.*;
             upvalue.location = &upvalue.closed;
-            self.vm.open_upvalues = upvalue.next;
+            self.open_upvalues = upvalue.next;
         }
     }
+};
+
+fn greater(x: f64, y: f64) Value {
+    return .{ .boolean = (x > y) };
+}
+
+fn less(x: f64, y: f64) Value {
+    return .{ .boolean = (x < y) };
+}
+
+fn add(x: f64, y: f64) Value {
+    return .{ .number = x + y };
+}
+
+fn sub(x: f64, y: f64) Value {
+    return .{ .number = x - y };
+}
+
+fn mul(x: f64, y: f64) Value {
+    return .{ .number = x * y };
+}
+
+fn div(x: f64, y: f64) Value {
+    return .{ .number = x / y };
+}
+
+const ExecutionContext = struct {
+    const Self = ExecutionContext;
+
+    vm: *VM,
 };
 
 fn clockNative(values: []Value) RuntimeError!Value {

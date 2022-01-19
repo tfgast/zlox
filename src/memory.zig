@@ -1,10 +1,12 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 
 const Allocator = std.mem.Allocator;
 const Table = @import("table.zig").Table;
 const Chunk = @import("chunk.zig").Chunk;
 const Value = @import("value.zig").Value;
+const VM = @import("vm.zig").VM;
 
 const object = @import("object.zig");
 const Obj = object.Obj;
@@ -28,12 +30,14 @@ pub const GarbageCollector = struct {
     const Self = GarbageCollector;
     allocator: Allocator,
     inner_allocator: Allocator,
+    vm: *VM,
     strings: Table,
     objects: ?*Obj,
 
-    pub fn init(allocator: Allocator) !*Self {
+    pub fn init(allocator: Allocator, vm: *VM) !*Self {
         var self = try allocator.create(Self);
         self.allocator = Allocator.init(self, Self.allocFn, Self.resizeFn, Self.freeFn);
+        self.vm = vm;
         self.inner_allocator = allocator;
         self.objects = null;
         self.strings = Table.init(self);
@@ -78,6 +82,7 @@ pub const GarbageCollector = struct {
         o.obj.type = ty;
         o.obj.next = self.objects;
         self.objects = o.asObj();
+        std.log.debug("{*} allocate {d} for {s}", .{ o, @sizeOf(T), @tagName(ty) });
         return o;
     }
 
@@ -156,6 +161,7 @@ pub const GarbageCollector = struct {
     }
 
     pub fn freeObject(self: *Self, obj: *Obj) void {
+        std.log.debug("{*} free {s}", .{ obj, @tagName(obj.type) });
         switch (obj.type) {
             .String => {
                 self.freeString(obj.asString());
@@ -198,10 +204,28 @@ pub const GarbageCollector = struct {
         self.allocator.destroy(upvalue);
     }
 
+    pub fn collectGarbage(self: *Self) void {
+        std.log.debug("-- gc begin", .{});
+        self.markRoots();
+        std.log.debug("-- gc end", .{});
+    }
+
+    pub fn markRoots(self: *Self) void {
+        _ = self;
+    }
+
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {
+        if (builtin.mode == std.builtin.Mode.Debug) {
+            self.collectGarbage();
+        }
         return self.inner_allocator.rawAlloc(len, ptr_align, len_align, ret_addr);
     }
     fn resizeFn(self: *Self, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
+        if (builtin.mode == std.builtin.Mode.Debug) {
+            if (new_len > buf.len) {
+                self.collectGarbage();
+            }
+        }
         return self.inner_allocator.rawResize(buf, buf_align, new_len, len_align, ret_addr);
     }
     fn freeFn(self: *Self, buf: []u8, buf_align: u29, ret_addr: usize) void {
