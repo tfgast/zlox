@@ -16,10 +16,12 @@ const object = @import("object.zig");
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
 
+pub const CompileError = error{Compile, OutOfMemory, ICE, InvalidCharacter};
+
 const Parser = struct {
     current: Token = Token{},
     previous: Token = Token{},
-    hadError: bool = false,
+    hadError: ?CompileError = null,
     panicMode: bool = false,
     scanner: Scanner,
 };
@@ -99,7 +101,6 @@ const ParseRule = struct {
         };
     }
 };
-pub const CompileError = error{Compile, OutOfMemory};
 
 pub const MAX_LOCALS: usize = 0x100;
 
@@ -130,8 +131,8 @@ pub const Compiler = struct {
             context.declaration();
         }
         const function = context.endCompiler();
-        if (parser.hadError) {
-            return CompileError.Compile;
+        if (parser.hadError) |err| {
+            return err;
         } else {
             return function;
         }
@@ -164,7 +165,7 @@ const CompileContext = struct {
             self.parser.current = self.parser.scanner.scanToken();
             // std.debug.print("Scanning: {} {s} {}\n", self.parser.current);
             if (self.parser.current.type != .Error) break;
-            self.errorAtCurrent(self.parser.current.str);
+            self.errorAtCurrent(self.parser.current.str, CompileError.Compile);
         }
     }
 
@@ -174,7 +175,7 @@ const CompileContext = struct {
             return;
         }
 
-        self.errorAtCurrent(message);
+        self.errorAtCurrent(message, CompileError.Compile);
     }
 
     fn check(self: *Self, ty: TokenType) bool {
@@ -190,8 +191,8 @@ const CompileContext = struct {
     }
 
     fn emitByte(self: *Self, byte: u8) void {
-        self.currentChunk().write(byte, self.parser.previous.line) catch {
-            return self.errorAtPrevious("Too much bytecode");
+        self.currentChunk().write(byte, self.parser.previous.line) catch |err| {
+            return self.errorAtPrevious("Too much bytecode", err);
         };
     }
 
@@ -214,7 +215,7 @@ const CompileContext = struct {
 
         const jump = self.currentChunk().code.len - loopStart + 2;
         if (jump > 0xffff) {
-            self.errorAtPrevious("Loop body too large.");
+            self.errorAtPrevious("Loop body too large.", CompileError.Compile);
         }
         self.emitByte(@intCast(u8, (jump >> 8) & 0xff));
         self.emitByte(@intCast(u8, jump & 0xff));
@@ -232,15 +233,15 @@ const CompileContext = struct {
     }
 
     fn emitConstant(self: *Self, value: Value) void {
-        self.currentChunk().writeConstant(value, self.parser.previous.line) catch {
-            return self.errorAtPrevious("Too many constants");
+        self.currentChunk().writeConstant(value, self.parser.previous.line) catch |err| {
+            return self.errorAtPrevious("Too many constants", err);
         };
     }
 
     fn patchJump(self: *Self, offset: usize) void {
         const jump = self.currentChunk().code.len - offset - 2;
         if (jump > 0xffff) {
-            self.errorAtPrevious("Too much code to jump over.");
+            self.errorAtPrevious("Too much code to jump over.", CompileError.Compile);
         }
         self.currentChunk().code[offset] = @intCast(u8, (jump >> 8) & 0xff);
         self.currentChunk().code[offset + 1] = @intCast(u8, jump & 0xff);
@@ -262,7 +263,7 @@ const CompileContext = struct {
         self.emitReturn();
         const function = self.function;
         if (std.log.level == .debug) {
-            if (!self.parser.hadError) {
+            if (self.parser.hadError != null) {
                 const name = if (function.name) |n| n.str else "<script>";
                 @import("debug.zig").disassembleChunk(self.currentChunk(), name);
             }
@@ -270,18 +271,18 @@ const CompileContext = struct {
         return function;
     }
 
-    fn errorAtCurrent(self: *Self, message: []const u8) void {
-        self.errorAt(&self.parser.current, message);
+    fn errorAtCurrent(self: *Self, message: []const u8, err: CompileError) void {
+        self.errorAt(&self.parser.current, message, err);
     }
 
-    fn errorAtPrevious(self: *Self, message: []const u8) void {
-        self.errorAt(&self.parser.previous, message);
+    fn errorAtPrevious(self: *Self, message: []const u8, err: CompileError) void {
+        self.errorAt(&self.parser.previous, message, err);
     }
 
-    fn errorAt(self: *Self, token: *Token, message: []const u8) void {
+    fn errorAt(self: *Self, token: *Token, message: []const u8, err: CompileError) void {
         if (self.parser.panicMode) return;
         self.parser.panicMode = true;
-        self.parser.hadError = true;
+        self.parser.hadError = err;
         const print = std.debug.print;
         print("[line {d}] Error ", .{token.line});
         if (token.type == .EOF) {
@@ -458,8 +459,8 @@ const CompileContext = struct {
 
     fn number(self: *Self, canAssign: bool) void {
         _ = canAssign;
-        const value = std.fmt.parseFloat(f64, self.parser.previous.str) catch {
-            return self.errorAtPrevious("Could not parse number");
+        const value = std.fmt.parseFloat(f64, self.parser.previous.str) catch |err| {
+            return self.errorAtPrevious("Could not parse number", err);
         };
         self.emitConstant(.{ .number = value });
     }
@@ -468,8 +469,8 @@ const CompileContext = struct {
         _ = canAssign;
         const n = self.parser.previous.str.len - 1;
         // remove quotes
-        const value = self.gc.copyString(self.parser.previous.str[1..n]) catch {
-            return self.errorAtPrevious("Could not allocate memory for string");
+        const value = self.gc.copyString(self.parser.previous.str[1..n]) catch |err| {
+            return self.errorAtPrevious("Could not allocate memory for string", err);
         };
         self.emitConstant(.{ .obj = value.toObj() });
     }
@@ -498,15 +499,14 @@ const CompileContext = struct {
 
     fn unary(self: *Self, canAssign: bool) void {
         _ = canAssign;
-        const operatorType = self.parser.previous.type;
+        const operator = &self.parser.previous;
+        const operatorType = operator.type;
         self.parsePrecedence(.Unary);
         switch (operatorType) {
             .Bang => self.emitOpCode(.Not),
             .Minus => self.emitOpCode(.Negate),
             else => {
-                std.log.err("ICE: Invalid unary operator {s}", .{@tagName(operatorType)});
-                self.parser.panicMode = true;
-                self.parser.hadError = true;
+                self.errorAt(operator, "ICE: Invalid unary operator", CompileError.ICE);
                 return;
             },
         }
@@ -514,7 +514,8 @@ const CompileContext = struct {
 
     fn binary(self: *Self, canAssign: bool) void {
         _ = canAssign;
-        const operatorType = self.parser.previous.type;
+        const operator = &self.parser.previous;
+        const operatorType = operator.type;
         const rule = ParseRule.get(operatorType);
         const higher_precedence = @intToEnum(Precedence, @enumToInt(rule.precedence) + 1);
         self.parsePrecedence(higher_precedence);
@@ -530,9 +531,7 @@ const CompileContext = struct {
             .Less => self.emitOpCode(.Less),
             .LessEqual => self.emitOpCodes(.Greater, .Not),
             else => {
-                std.log.err("ICE: Invalid binary operator {s}", .{@tagName(operatorType)});
-                self.parser.panicMode = true;
-                self.parser.hadError = true;
+                self.errorAt(operator, "ICE: Invalid binary operator", CompileError.ICE);
                 return;
             },
         }
@@ -546,9 +545,7 @@ const CompileContext = struct {
             .Nil => self.emitOpCode(.Nil),
             .True => self.emitOpCode(.True),
             else => {
-                std.log.err("ICE: Invalid literal {s}", .{@tagName(lit)});
-                self.parser.panicMode = true;
-                self.parser.hadError = true;
+                self.errorAtPrevious("ICE: Invalid literal", CompileError.ICE);
                 return;
             },
         }
@@ -558,7 +555,7 @@ const CompileContext = struct {
         self.advance();
         const rule = ParseRule.get(self.parser.previous.type);
         const prefix_rule = rule.prefix orelse {
-            self.errorAtPrevious("Expect expression.");
+            self.errorAtPrevious("Expect expression.", CompileError.Compile);
             return;
         };
         const canAssign = @enumToInt(precedence) <= @enumToInt(Precedence.Assignment);
@@ -567,30 +564,28 @@ const CompileContext = struct {
             self.advance();
             const rule1 = ParseRule.get(self.parser.previous.type);
             const infix_rule = rule1.infix orelse {
-                std.log.err("ICE: No infix rule for {s}", .{@tagName(self.parser.previous.type)});
-                self.parser.panicMode = true;
-                self.parser.hadError = true;
+                self.errorAtPrevious("ICE: No infix rule found", CompileError.ICE);
                 return;
             };
             infix_rule(self, canAssign);
         }
 
         if (canAssign and self.match(.Equal)) {
-            self.errorAtPrevious("Invalid assignment target.");
+            self.errorAtPrevious("Invalid assignment target.", CompileError.Compile);
         }
     }
 
     fn identifierConstant(self: *Self, name: *const Token) u8 {
-        const value = self.gc.copyString(name.str) catch {
-            self.errorAtPrevious("Could not allocate memory for identifier");
+        const value = self.gc.copyString(name.str) catch |err| {
+            self.errorAtPrevious("Could not allocate memory for identifier", err);
             return 0;
         };
-        const c = self.currentChunk().addConstant(.{ .obj = value.toObj() }) catch {
-            self.errorAtPrevious("Could not allocate memory for identifier");
+        const c = self.currentChunk().addConstant(.{ .obj = value.toObj() }) catch |err| {
+            self.errorAtPrevious("Could not allocate memory for identifier", err);
             return 0;
         };
         if (c > 0xff) {
-            self.errorAtPrevious("Too many constants in one chunk");
+            self.errorAtPrevious("Too many constants in one chunk", CompileError.Compile);
             return 0;
         }
         return @intCast(u8, c);
@@ -603,7 +598,7 @@ const CompileContext = struct {
             const local = &self.locals[i];
             if (std.mem.eql(u8, name.str, local.name.str)) {
                 if (local.depth == null) {
-                    self.errorAtPrevious("Can't read local variable in its own initializer");
+                    self.errorAtPrevious("Can't read local variable in its own initializer", CompileError.Compile);
                 }
                 return i;
             }
@@ -613,7 +608,7 @@ const CompileContext = struct {
 
     fn addLocal(self: *Self, name: Token) void {
         if (self.local_count == MAX_LOCALS) {
-            self.errorAtPrevious("Too many local variables in function.");
+            self.errorAtPrevious("Too many local variables in function.", CompileError.Compile);
             return;
         }
         const local = &self.locals[self.local_count];
@@ -634,7 +629,7 @@ const CompileContext = struct {
                 break;
             }
             if (std.mem.eql(u8, name.str, local.name.str)) {
-                self.errorAtPrevious("Already a variable with this name in this scope.");
+                self.errorAtPrevious("Already a variable with this name in this scope.", CompileError.Compile);
             }
         }
         self.addLocal(name);

@@ -11,10 +11,11 @@ const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
 
 const Compiler = @import("compiler.zig").Compiler;
+const CompileError = @import("compiler.zig").CompileError;
 const GarbageCollector = @import("memory.zig").GarbageCollector;
 const Allocator = std.mem.Allocator;
 
-const InterpretError = error{ OutOfMemory, Compile, Runtime } || std.os.WriteError;
+const InterpretError = error{ Runtime } || CompileError || std.os.WriteError;
 const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * 256;
 
