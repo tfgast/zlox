@@ -15,7 +15,7 @@ const CompileError = @import("compiler.zig").CompileError;
 const GarbageCollector = @import("memory.zig").GarbageCollector;
 const Allocator = std.mem.Allocator;
 
-const InterpretError = error{ Runtime } || CompileError || std.os.WriteError;
+const InterpretError = error{Runtime} || CompileError || std.os.WriteError;
 const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * 256;
 
@@ -89,14 +89,11 @@ const ExecutionContext = struct {
     frame: [*]CallFrame,
 
     fn init(vm: *VM, function: *ObjFunction) Self {
-        const base_frame : [*]CallFrame = &vm.frames;
+        const base_frame: [*]CallFrame = &vm.frames;
         var frame = base_frame + vm.frame_count;
-        vm.frame_count += 1;
-        frame[0].function = function;
-        frame[0].ip = function.chunk.code.ptr;
-        frame[0].slots = &vm.stack;
         var r = Self{ .vm = vm, .stack_top = &vm.stack, .frame = frame };
-        r.push(.{.obj = function.toObj()});
+        r.push(.{ .obj = function.toObj() });
+        _ = r.call(function, 0);
         return r;
     }
 
@@ -108,10 +105,17 @@ const ExecutionContext = struct {
     fn runtimeError(self: *Self, comptime format: []const u8, args: anytype) void {
         std.debug.print(format, args);
         std.debug.print("\n", .{});
-        const frame = &self.vm.frames[self.vm.frame_count - 1];
-        const offset = @ptrToInt(frame.ip) - @ptrToInt(frame.function.chunk.code.ptr) - 1;
-        const line = frame.function.chunk.getLine(offset);
-        std.debug.print("[line {d}] in script\n", .{line});
+        var i = self.vm.frame_count;
+        while (i > 0) {
+            i -= 1;
+            const frame = &self.vm.frames[i];
+            const function = frame.function;
+            const offset = @ptrToInt(frame.ip) - @ptrToInt(function.chunk.code.ptr) - 1;
+            const line = frame.function.chunk.getLine(offset);
+            std.debug.print("[line {d}] in ", .{line});
+            function.print();
+            std.debug.print("\n", .{});
+        }
         self.resetStack();
     }
 
@@ -159,7 +163,7 @@ const ExecutionContext = struct {
     }
 
     fn run(self: *Self) InterpretError!void {
-        var base_frame : [*]CallFrame = &self.vm.frames;
+        var base_frame: [*]CallFrame = &self.vm.frames;
         self.frame = base_frame + (self.vm.frame_count - 1);
         while (true) {
             if (builtin.mode == std.builtin.Mode.Debug) {
@@ -194,8 +198,24 @@ const ExecutionContext = struct {
                     const offset = self.read_short();
                     self.frame[0].ip -= offset;
                 },
+                .Call => {
+                    const arg_count = self.read_byte();
+                    if (!self.callValue(self.peek(arg_count), arg_count)) {
+                        return InterpretError.Runtime;
+                    }
+                    self.frame = base_frame + self.vm.frame_count - 1;
+                },
                 .Return => {
-                    return;
+                    const result = self.pop();
+                    self.vm.frame_count -= 1;
+                    if (self.vm.frame_count == 0) {
+                        _ = self.pop();
+                        return;
+                    }
+
+                    self.stack_top = self.frame[0].slots;
+                    self.push(result);
+                    self.frame = base_frame + self.vm.frame_count - 1;
                 },
                 .Constant => {
                     const constant = self.read_constant();
@@ -328,5 +348,36 @@ const ExecutionContext = struct {
             return InterpretError.Runtime;
         };
         self.push(.{ .obj = result.toObj() });
+    }
+
+    fn callValue(self: *Self, callee: Value, arg_count: u8) bool {
+        switch (callee) {
+            .obj => |obj| {
+                switch (obj.type) {
+                    .Function => return self.call(obj.asFunction(), arg_count),
+                    else => {},
+                }
+            },
+            else => {},
+        }
+        self.runtimeError("Can only call functions and classes.", .{});
+        return false;
+    }
+
+    fn call(self: *Self, function: *ObjFunction, arg_count: u8) bool {
+        if (arg_count != function.arity) {
+            self.runtimeError("Expected {d} arguments but got {d}.", .{ function.arity, arg_count });
+            return false;
+        }
+        if (self.vm.frame_count == FRAMES_MAX) {
+            self.runtimeError("Stack overflow.", .{});
+            return false;
+        }
+        var frame = &self.vm.frames[self.vm.frame_count];
+        self.vm.frame_count += 1;
+        frame.function = function;
+        frame.ip = function.chunk.code.ptr;
+        frame.slots = self.stack_top - arg_count - 1;
+        return true;
     }
 };

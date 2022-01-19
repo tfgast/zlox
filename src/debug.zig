@@ -30,6 +30,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .Loop => {
             return jumpInstruction("OP_LOOP", -1, c, offset);
         },
+        .Call => {
+            return byteInstruction("OP_CALL", c, offset);
+        },
         .Return => return simpleInstruction("OP_RETURN", offset),
         .Constant => {
             return constantInstruction("OP_CONSTANT", c, offset);

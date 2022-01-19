@@ -16,7 +16,7 @@ const object = @import("object.zig");
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
 
-pub const CompileError = error{Compile, OutOfMemory, ICE, InvalidCharacter};
+pub const CompileError = error{ Compile, OutOfMemory, ICE, InvalidCharacter };
 
 const Parser = struct {
     current: Token = Token{},
@@ -57,8 +57,9 @@ const ParseRule = struct {
         const variable = CompileContext.variable;
         const and_ = CompileContext.and_;
         const or_ = CompileContext.or_;
+        const call = CompileContext.call;
         return switch (ty) {
-            .LeftParen => .{ .prefix = grouping, .infix = null, .precedence = .None },
+            .LeftParen => .{ .prefix = grouping, .infix = call, .precedence = .Call },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
             .LeftBrace => .{ .prefix = null, .infix = null, .precedence = .None },
             .RightBrace => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -109,10 +110,7 @@ pub const Local = struct {
     depth: ?u8 = 0,
 };
 
-pub const FunctionType = enum {
-    Function, Script
-};
-
+pub const FunctionType = enum { Function, Script };
 
 pub const Compiler = struct {
     const Self = Compiler;
@@ -124,8 +122,8 @@ pub const Compiler = struct {
     }
 
     pub fn compile(self: *Self, source: []const u8) CompileError!*ObjFunction {
-        var parser = Parser{.scanner = Scanner.init(source)};
-        var context = CompileContext.init(self.gc, &parser, try self.gc.newFunction(), .Script);
+        var parser = Parser{ .scanner = Scanner.init(source) };
+        var context = try CompileContext.init(self.gc, &parser, .Script);
         context.advance();
         while (!context.match(TokenType.EOF)) {
             context.declaration();
@@ -141,22 +139,27 @@ pub const Compiler = struct {
 
 const CompileContext = struct {
     const Self = CompileContext;
+    enclosing: ?*Self = null,
     gc: *GarbageCollector,
     parser: *Parser,
 
-    function: *ObjFunction,
+    obj_function: *ObjFunction,
     type: FunctionType,
 
     locals: [MAX_LOCALS]Local = [_]Local{.{}} ** MAX_LOCALS,
     local_count: usize = 1,
     scope_depth: u8 = 0,
 
-    fn init(gc: *GarbageCollector, parser: *Parser, function: *ObjFunction, ty: FunctionType) Self {
-        return Self{ .gc = gc, .parser = parser, .function = function, .type = ty };
+    fn init(gc: *GarbageCollector, parser: *Parser, ty: FunctionType) !Self {
+        var f = try gc.newFunction();
+        if (ty != .Script) {
+            f.name = try gc.copyString(parser.previous.str);
+        }
+        return Self{ .gc = gc, .parser = parser, .obj_function = f, .type = ty };
     }
 
     fn currentChunk(self: *Self) *Chunk {
-        return &self.function.chunk;
+        return &self.obj_function.chunk;
     }
 
     fn advance(self: *Self) void {
@@ -229,6 +232,7 @@ const CompileContext = struct {
     }
 
     fn emitReturn(self: *Self) void {
+        self.emitOpCode(.Nil);
         self.emitOpCode(.Return);
     }
 
@@ -261,14 +265,14 @@ const CompileContext = struct {
 
     fn endCompiler(self: *Self) *ObjFunction {
         self.emitReturn();
-        const function = self.function;
+        const f = self.obj_function;
         if (std.log.level == .debug) {
-            if (self.parser.hadError != null) {
-                const name = if (function.name) |n| n.str else "<script>";
+            if (self.parser.hadError == null) {
+                const name = if (f.name) |n| n.str else "<script>";
                 @import("debug.zig").disassembleChunk(self.currentChunk(), name);
             }
         }
-        return function;
+        return f;
     }
 
     fn errorAtCurrent(self: *Self, message: []const u8, err: CompileError) void {
@@ -305,8 +309,39 @@ const CompileContext = struct {
         self.consume(.RightBrace, "Expect '}' after block.");
     }
 
+    fn function(self: *Self, ty: FunctionType) void {
+        var context = CompileContext.init(self.gc, self.parser, ty) catch |err| {
+            return self.errorAtPrevious("Could allocate for function", err);
+        };
+        context.enclosing = self;
+        context.beginScope();
+
+        context.consume(.LeftParen, "Expect '(' after function name.");
+        if (!context.check(.RightParen)) {
+            while (true) {
+                context.obj_function.arity += 1;
+                if (context.obj_function.arity > 255) {
+                    self.errorAtCurrent("Can't have more than 255 parameters.", CompileError.Compile);
+                }
+                const constant = context.parseVariable("Expect parameter name");
+                context.defineVariable(constant);
+                if (!context.match(.Comma)) {
+                    break;
+                }
+            }
+        }
+        context.consume(.RightParen, "Expect ')' after parameters.");
+        context.consume(.LeftBrace, "Expect '{' before function body.");
+        context.block();
+
+        const f = context.endCompiler();
+        self.emitConstant(.{ .obj = f.toObj() });
+    }
+
     fn declaration(self: *Self) void {
-        if (self.match(.Var)) {
+        if (self.match(.Fun)) {
+            self.funDeclaration();
+        } else if (self.match(.Var)) {
             self.varDeclaration();
         } else {
             self.statement();
@@ -314,6 +349,13 @@ const CompileContext = struct {
         if (self.parser.panicMode) {
             self.synchronize();
         }
+    }
+
+    fn funDeclaration(self: *Self) void {
+        const global = self.parseVariable("Expect variable name.");
+        self.markInitialized();
+        self.function(.Function);
+        self.defineVariable(global);
     }
 
     fn varDeclaration(self: *Self) void {
@@ -335,6 +377,8 @@ const CompileContext = struct {
             self.forStatement();
         } else if (self.match(.If)) {
             self.ifStatement();
+        } else if (self.match(.Return)) {
+            self.returnStatement();
         } else if (self.match(.While)) {
             self.whileStatement();
         } else if (self.match(.LeftBrace)) {
@@ -364,6 +408,19 @@ const CompileContext = struct {
         self.emitOpCode(.Print);
     }
 
+    fn returnStatement(self: *Self) void {
+        if (self.type == .Script) {
+            self.errorAtPrevious("Can't return from top-level code.", CompileError.Compile);
+        }
+        if (self.match(.Semicolon)) {
+            self.emitReturn();
+        } else {
+            self.expression();
+            self.consume(.Semicolon, "Expect ';' after value.");
+            self.emitOpCode(.Return);
+        }
+    }
+
     fn expressionStatement(self: *Self) void {
         self.expression();
         self.consume(.Semicolon, "Expect ';' after value.");
@@ -373,15 +430,14 @@ const CompileContext = struct {
     fn forStatement(self: *Self) void {
         self.beginScope();
         self.consume(.LeftParen, "Expect '(' after 'for'.");
-        if (self.match(.Semicolon)) {
-        } else if (self.match(.Var)) {
+        if (self.match(.Semicolon)) {} else if (self.match(.Var)) {
             self.varDeclaration();
         } else {
             self.expressionStatement();
         }
 
         var loopStart = self.currentChunk().code.len;
-        var exitJump : ?usize = null;
+        var exitJump: ?usize = null;
         if (!self.match(.Semicolon)) {
             self.expression();
             self.consume(.Semicolon, "Expect ';' after loop condition.");
@@ -390,7 +446,6 @@ const CompileContext = struct {
             exitJump = self.emitJump(.JumpIfFalse);
             self.emitOpCode(.Pop);
         }
-
 
         if (!self.match(.RightParen)) {
             const bodyJump = self.emitJump(.Jump);
@@ -537,6 +592,13 @@ const CompileContext = struct {
         }
     }
 
+    fn call(self: *Self, canAssign: bool) void {
+        _ = canAssign;
+        const arg_count = self.argumentList();
+        self.emitOpCode(.Call);
+        self.emitByte(arg_count);
+    }
+
     fn literal(self: *Self, canAssign: bool) void {
         _ = canAssign;
         const lit = self.parser.previous.type;
@@ -653,6 +715,24 @@ const CompileContext = struct {
         self.emitByte(global);
     }
 
+    fn argumentList(self: *Self) u8 {
+        var arg_count: u8 = 0;
+        if (!self.check(.RightParen)) {
+            while (true) {
+                self.expression();
+                if (arg_count == 255) {
+                    self.errorAtPrevious("Can't have more than 255 arguments", CompileError.Compile);
+                }
+                arg_count += 1;
+                if (!self.match(.Comma)) {
+                    break;
+                }
+            }
+        }
+        self.consume(.RightParen, "expect ')' after arguments.");
+        return arg_count;
+    }
+
     fn and_(self: *Self, canAssign: bool) void {
         _ = canAssign;
         const endJump = self.emitJump(.JumpIfFalse);
@@ -676,6 +756,7 @@ const CompileContext = struct {
     }
 
     fn markInitialized(self: *Self) void {
+        if (self.scope_depth == 0) return;
         self.locals[self.local_count - 1].depth = self.scope_depth;
     }
 };
