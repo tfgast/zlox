@@ -33,7 +33,6 @@ pub const VM = struct {
     globals: Table,
     stack: [STACK_MAX]Value = [_]Value{.nil} ** STACK_MAX,
     frames: [FRAMES_MAX]CallFrame,
-    frame_count: usize = 0,
 
     pub fn init(allocator: Allocator) !Self {
         const gc = try GarbageCollector.init(allocator);
@@ -87,11 +86,10 @@ const ExecutionContext = struct {
     vm: *VM,
     stack_top: [*]Value,
     frame: [*]CallFrame,
+    frame_count: usize = 0,
 
     fn init(vm: *VM, function: *ObjFunction) Self {
-        const base_frame: [*]CallFrame = &vm.frames;
-        var frame = base_frame + vm.frame_count;
-        var r = Self{ .vm = vm, .stack_top = &vm.stack, .frame = frame };
+        var r = Self{ .vm = vm, .stack_top = &vm.stack, .frame = &vm.frames };
         r.push(.{ .obj = function.toObj() });
         _ = r.call(function, 0);
         return r;
@@ -99,13 +97,13 @@ const ExecutionContext = struct {
 
     fn resetStack(self: *Self) void {
         self.stack_top = &self.vm.stack;
-        self.vm.frame_count = 0;
+        self.frame_count = 0;
     }
 
     fn runtimeError(self: *Self, comptime format: []const u8, args: anytype) void {
         std.debug.print(format, args);
         std.debug.print("\n", .{});
-        var i = self.vm.frame_count;
+        var i = self.frame_count;
         while (i > 0) {
             i -= 1;
             const frame = &self.vm.frames[i];
@@ -164,7 +162,7 @@ const ExecutionContext = struct {
 
     fn run(self: *Self) InterpretError!void {
         var base_frame: [*]CallFrame = &self.vm.frames;
-        self.frame = base_frame + (self.vm.frame_count - 1);
+        self.frame = base_frame + (self.frame_count - 1);
         while (true) {
             if (builtin.mode == std.builtin.Mode.Debug) {
                 std.debug.print("          ", .{});
@@ -203,19 +201,19 @@ const ExecutionContext = struct {
                     if (!self.callValue(self.peek(arg_count), arg_count)) {
                         return InterpretError.Runtime;
                     }
-                    self.frame = base_frame + self.vm.frame_count - 1;
+                    self.frame = base_frame + self.frame_count - 1;
                 },
                 .Return => {
                     const result = self.pop();
-                    self.vm.frame_count -= 1;
-                    if (self.vm.frame_count == 0) {
+                    self.frame_count -= 1;
+                    if (self.frame_count == 0) {
                         _ = self.pop();
                         return;
                     }
 
                     self.stack_top = self.frame[0].slots;
                     self.push(result);
-                    self.frame = base_frame + self.vm.frame_count - 1;
+                    self.frame = base_frame + self.frame_count - 1;
                 },
                 .Constant => {
                     const constant = self.read_constant();
@@ -369,12 +367,12 @@ const ExecutionContext = struct {
             self.runtimeError("Expected {d} arguments but got {d}.", .{ function.arity, arg_count });
             return false;
         }
-        if (self.vm.frame_count == FRAMES_MAX) {
+        if (self.frame_count == FRAMES_MAX) {
             self.runtimeError("Stack overflow.", .{});
             return false;
         }
-        var frame = &self.vm.frames[self.vm.frame_count];
-        self.vm.frame_count += 1;
+        var frame = &self.vm.frames[self.frame_count];
+        self.frame_count += 1;
         frame.function = function;
         frame.ip = function.chunk.code.ptr;
         frame.slots = self.stack_top - arg_count - 1;
