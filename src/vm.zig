@@ -43,6 +43,7 @@ pub const VM = struct {
     stack_top: [*]Value,
     frame: [*]CallFrame,
     frame_count: usize,
+    init_string: ?*ObjString,
 
     pub fn init(allocator: Allocator) !*Self {
         var vm = try allocator.create(Self);
@@ -54,6 +55,9 @@ pub const VM = struct {
         vm.stack_top = &vm.stack;
         vm.frame = &vm.frames;
         vm.frame_count = 0;
+        vm.init_string = null;
+
+        vm.init_string = try gc.copyString("init");
 
         _ = try clockNative(&[_]Value{});
         try vm.defineNative("clock", clockNative);
@@ -61,6 +65,7 @@ pub const VM = struct {
     }
 
     pub fn free(self: *Self) void {
+        self.init_string = null;
         self.globals.free();
         self.gc.free();
     }
@@ -434,6 +439,12 @@ pub const VM = struct {
                             return false;
                         };
                         (self.stack_top - arg_count - 1)[0] = .{ .obj = instance.asObj() };
+                        if (class.methods.get(self.init_string.?)) |initializer| {
+                            return self.call(initializer.asClosure(), arg_count);
+                        } else if (arg_count != 0) {
+                            self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
+                            return false;
+                        }
                         return true;
                     },
                     .Native => {
@@ -510,6 +521,7 @@ pub const VM = struct {
         const method = self.peek(0);
         var class = self.peek(1).asClass();
         _ = try class.methods.set(name, method);
+        _ = self.pop();
     }
 
     fn bindMethod(self: *Self, class: *ObjClass, name: *ObjString) bool {

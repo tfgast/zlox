@@ -119,7 +119,7 @@ pub const Upvalue = struct {
     is_local: bool = true,
 };
 
-pub const FunctionType = enum { Function, Script, Method };
+pub const FunctionType = enum { Function, Script, Method, Initializer };
 
 pub const Compiler = struct {
     const Self = Compiler;
@@ -171,7 +171,7 @@ const CompileContext = struct {
     fn init(gc: *GarbageCollector, compiler: *Compiler, parser: *Parser, ty: FunctionType) !Self {
         var f = try gc.newFunction();
         var r = Self{ .gc = gc, .compiler = compiler, .parser = parser, .obj_function = f, .type = ty };
-        if (ty == .Method) {
+        if (ty == .Method or ty == .Initializer) {
             r.locals[0].name.str = "this";
         }
         return r;
@@ -251,7 +251,12 @@ const CompileContext = struct {
     }
 
     fn emitReturn(self: *Self) void {
-        self.emitOpCode(.Nil);
+        if (self.type == .Initializer) {
+            self.emitOpCode(.GetLocal);
+            self.emitByte(0);
+        } else {
+            self.emitOpCode(.Nil);
+        }
         self.emitOpCode(.Return);
     }
 
@@ -376,7 +381,11 @@ const CompileContext = struct {
         self.consume(.Identifier, "Expect method name.");
         const constant = self.identifierConstant(&self.parser.previous);
 
-        self.function(.Method);
+        if (std.mem.eql(u8, self.parser.previous.str, "init")) {
+            self.function(.Initializer);
+        } else {
+            self.function(.Method);
+        }
 
         self.emitOpCode(.Method);
         self.emitByte(constant);
@@ -486,6 +495,9 @@ const CompileContext = struct {
         if (self.match(.Semicolon)) {
             self.emitReturn();
         } else {
+            if (self.type == .Initializer) {
+                self.errorAtPrevious("Can't return a value from an initializer.", CompileError.Compile);
+            }
             self.expression();
             self.consume(.Semicolon, "Expect ';' after value.");
             self.emitOpCode(.Return);

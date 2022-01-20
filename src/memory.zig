@@ -266,6 +266,9 @@ pub const GarbageCollector = struct {
         }
         self.markTable(&self.vm.globals);
         self.markCompilerRoots(&self.vm.compiler);
+        if (self.vm.init_string) |s| {
+            self.markObj(s.asObj());
+        }
     }
 
     fn markCompilerRoots(self: *Self, compiler: *Compiler) void {
