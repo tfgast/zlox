@@ -38,6 +38,8 @@ pub const GarbageCollector = struct {
     strings: Table,
     objects: ?*Obj,
     gray_stack: GrayStack,
+    bytes_allocated: usize,
+    next_gc: usize,
 
     pub fn init(allocator: Allocator, vm: *VM) !*Self {
         var self = try allocator.create(Self);
@@ -47,6 +49,8 @@ pub const GarbageCollector = struct {
         self.inner_allocator = allocator;
         self.objects = null;
         self.strings = Table.init(self);
+        self.bytes_allocated = 0;
+        self.next_gc = 1024 * 1024;
         return self;
     }
 
@@ -213,12 +217,15 @@ pub const GarbageCollector = struct {
     }
 
     pub fn collectGarbage(self: *Self) void {
+        const before = self.bytes_allocated;
         std.log.debug("-- gc begin", .{});
         self.markRoots();
         self.traceReferences();
         self.strings.removeWhite();
         self.sweep();
         std.log.debug("-- gc end", .{});
+        self.next_gc = self.bytes_allocated * 2;
+        std.log.debug("   collected {d} bytes (from {d} to {d}) next at {d}", .{ before - self.bytes_allocated, before, self.bytes_allocated, self.next_gc });
     }
 
     fn markRoots(self: *Self) void {
@@ -326,16 +333,22 @@ pub const GarbageCollector = struct {
     }
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {
+        self.bytes_allocated += len;
         if (builtin.mode == std.builtin.Mode.Debug) {
+            self.collectGarbage();
+        } else if (self.bytes_allocated > self.next_gc) {
             self.collectGarbage();
         }
         return self.inner_allocator.rawAlloc(len, ptr_align, len_align, ret_addr);
     }
     fn resizeFn(self: *Self, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
+        self.bytes_allocated += new_len - buf.len;
         if (builtin.mode == std.builtin.Mode.Debug) {
             if (new_len > buf.len) {
                 self.collectGarbage();
             }
+        } else if (self.bytes_allocated > self.next_gc) {
+            self.collectGarbage();
         }
         return self.inner_allocator.rawResize(buf, buf_align, new_len, len_align, ret_addr);
     }
