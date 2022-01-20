@@ -162,7 +162,6 @@ pub const Scanner = struct {
                 '\n' => {
                     self.line += 1;
                     _ = self.advance();
-                    break;
                 },
                 '/' => {
                     if (self.peekNext() == '/') {
@@ -173,7 +172,6 @@ pub const Scanner = struct {
                     } else {
                         return;
                     }
-                    break;
                 },
                 else => {
                     return;

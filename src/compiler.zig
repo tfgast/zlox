@@ -60,6 +60,7 @@ const ParseRule = struct {
         const call = CompileContext.call;
         const dot = CompileContext.dot;
         const this = CompileContext.this;
+        const super = CompileContext.super;
         return switch (ty) {
             .LeftParen => .{ .prefix = grouping, .infix = call, .precedence = .Call },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -94,7 +95,7 @@ const ParseRule = struct {
             .Or => .{ .prefix = null, .infix = or_, .precedence = .Or },
             .Print => .{ .prefix = null, .infix = null, .precedence = .None },
             .Return => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Super => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Super => .{ .prefix = super, .infix = null, .precedence = .None },
             .This => .{ .prefix = this, .infix = null, .precedence = .None },
             .True => .{ .prefix = literal, .infix = null, .precedence = .None },
             .Var => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -151,6 +152,7 @@ pub const Compiler = struct {
 
 const ClassCompiler = struct {
     enclosing: ?*ClassCompiler,
+    has_superclass: bool = false,
 };
 
 const CompileContext = struct {
@@ -419,6 +421,21 @@ const CompileContext = struct {
         var class_compiler = ClassCompiler{ .enclosing = self.compiler.current_class };
         self.compiler.current_class = &class_compiler;
 
+        if (self.match(.Less)) {
+            self.consume(.Identifier, "Expect superclass name.");
+            self.variable(false);
+            if (std.mem.eql(u8, class_name.str, self.parser.previous.str)) {
+                self.errorAtPrevious("A class can't inherit from itself.", CompileError.Compile);
+            }
+            self.beginScope();
+            self.addLocal(Token{ .str = "super" });
+            self.defineVariable(0);
+
+            self.namedVariable(class_name, false);
+            self.emitOpCode(.Inherit);
+            class_compiler.has_superclass = true;
+        }
+
         self.namedVariable(class_name, false);
 
         self.consume(.LeftBrace, "Expect '{' before class body.");
@@ -427,6 +444,10 @@ const CompileContext = struct {
         }
         self.consume(.RightBrace, "Expect '}' after class body.");
         self.emitOpCode(.Pop);
+
+        if (class_compiler.has_superclass) {
+            self.endScope();
+        }
 
         self.compiler.current_class = self.compiler.current_class.?.enclosing;
     }
@@ -639,6 +660,23 @@ const CompileContext = struct {
 
     fn variable(self: *Self, can_assign: bool) void {
         self.namedVariable(self.parser.previous, can_assign);
+    }
+
+    fn super(self: *Self, can_assign: bool) void {
+        _ = can_assign;
+        if (self.compiler.current_class == null) {
+            self.errorAtPrevious("Can't use 'super' outside of a class.", CompileError.Compile);
+        } else if (self.compiler.current_class.?.has_superclass) {
+            self.errorAtPrevious("Can't use 'super' in a class with no superclass.", CompileError.Compile);
+        }
+        self.consume(.Dot, "Expect '.' after 'super'.");
+        self.consume(.Identifier, "Expect superclass method name.");
+        const name = self.identifierConstant(&self.parser.previous);
+
+        self.namedVariable(Token{ .str = "this" }, false);
+        self.namedVariable(Token{ .str = "super" }, false);
+        self.emitOpCode(.GetSuper);
+        self.emitByte(name);
     }
 
     fn this(self: *Self, can_assign: bool) void {

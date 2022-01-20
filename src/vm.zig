@@ -339,6 +339,13 @@ pub const VM = struct {
                     _ = self.pop(); //Instance
                     self.push(v);
                 },
+                .GetSuper => {
+                    const superclass = self.pop().asClass();
+                    const name = self.read_string();
+                    if (!self.bindMethod(superclass, name)) {
+                        return InterpretError.Runtime;
+                    }
+                },
                 .Equal => {
                     const b = self.pop();
                     const a = self.pop();
@@ -387,6 +394,20 @@ pub const VM = struct {
                         return InterpretError.Runtime;
                     };
                     self.push(.{ .obj = class.asObj() });
+                },
+                .Inherit => {
+                    const superclass = self.peek(1);
+                    if (!superclass.isClass()) {
+                        self.runtimeError("Superclass must be a class.", .{});
+                        return InterpretError.Runtime;
+                    }
+                    const subclass = self.peek(0).asClass();
+
+                    superclass.asClass().methods.addAll(&subclass.methods) catch {
+                        self.runtimeError("Out of Memory", .{});
+                        return InterpretError.Runtime;
+                    };
+                    _ = self.pop();
                 },
                 .Method => {
                     self.defineMethod(self.read_string()) catch {

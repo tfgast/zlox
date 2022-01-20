@@ -76,7 +76,7 @@ pub const Table = struct {
     pub fn addAll(self: *Self, to: *Self) !void {
         for (self.entries) |entry| {
             const key = entry.key orelse continue;
-            try to.set(key, entry.value);
+            _ = try to.set(key, entry.value);
         }
     }
 

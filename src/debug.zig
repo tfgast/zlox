@@ -60,6 +60,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .Class => {
             return constantInstruction("OP_CLASS", c, offset);
         },
+        .Inherit => {
+            return simpleInstruction("OP_INHERIT", offset);
+        },
         .Method => {
             return constantInstruction("OP_METHOD", c, offset);
         },
@@ -107,6 +110,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         },
         .SetProperty => {
             return constantInstruction("OP_SET_PROPERTY", c, offset);
+        },
+        .GetSuper => {
+            return constantInstruction("OP_GET_SUPER", c, offset);
         },
         .Equal => {
             return simpleInstruction("OP_EQUAL", offset);

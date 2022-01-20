@@ -16,7 +16,7 @@ pub fn main() anyerror!void {
     defer std.process.argsFree(allocator, args);
     if (args.len == 1) {
         try repl(allocator);
-    } else if (args.len == 1) {
+    } else if (args.len == 2) {
         try runFile(allocator, args[1]);
     } else {
         std.log.err("Usage: zlox [path]\n", .{});
