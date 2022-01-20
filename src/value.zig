@@ -10,6 +10,8 @@ const ObjClosure = object.ObjClosure;
 const ObjFunction = object.ObjFunction;
 const ObjNative = object.ObjNative;
 const ObjUpvalue = object.ObjUpvalue;
+const ObjInstance = object.ObjInstance;
+const ObjClass = object.ObjClass;
 
 pub const ValueType = enum { boolean, nil, number, obj };
 
@@ -67,6 +69,14 @@ pub const Value = union(ValueType) {
         return self.isObjType(.Upvalue);
     }
 
+    pub fn isClass(self: Value) bool {
+        return self.isObjType(.Class);
+    }
+
+    pub fn isInstance(self: Value) bool {
+        return self.isObjType(.Instance);
+    }
+
     pub fn asString(self: Value) *ObjString {
         std.debug.assert(self.isString());
         return self.obj.asString();
@@ -90,6 +100,16 @@ pub const Value = union(ValueType) {
     pub fn asUpvalue(self: Value) *ObjUpvalue {
         std.debug.assert(self.isUpvalue());
         return self.obj.asUpvalue();
+    }
+
+    pub fn asClass(self: Value) *ObjClass {
+        std.debug.assert(self.isClass());
+        return self.obj.asClass();
+    }
+
+    pub fn asInstance(self: Value) *ObjInstance {
+        std.debug.assert(self.isInstance());
+        return self.obj.asInstance();
     }
 
     pub fn asStringBytes(self: Value) []u8 {

@@ -58,13 +58,14 @@ const ParseRule = struct {
         const and_ = CompileContext.and_;
         const or_ = CompileContext.or_;
         const call = CompileContext.call;
+        const dot = CompileContext.dot;
         return switch (ty) {
             .LeftParen => .{ .prefix = grouping, .infix = call, .precedence = .Call },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
             .LeftBrace => .{ .prefix = null, .infix = null, .precedence = .None },
             .RightBrace => .{ .prefix = null, .infix = null, .precedence = .None },
             .Comma => .{ .prefix = null, .infix = null, .precedence = .None },
-            .Dot => .{ .prefix = null, .infix = null, .precedence = .None },
+            .Dot => .{ .prefix = null, .infix = dot, .precedence = .Call },
             .Minus => .{ .prefix = unary, .infix = binary, .precedence = .Term },
             .Plus => .{ .prefix = null, .infix = binary, .precedence = .Term },
             .Semicolon => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -544,22 +545,22 @@ const CompileContext = struct {
         self.patchJump(elseJump);
     }
 
-    fn grouping(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn grouping(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         self.expression();
         self.consume(.RightParen, "Expect ')' after expression.");
     }
 
-    fn number(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn number(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const value = std.fmt.parseFloat(f64, self.parser.previous.str) catch |err| {
             return self.errorAtPrevious("Could not parse number", err);
         };
         self.emitConstant(.{ .number = value });
     }
 
-    fn string(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn string(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const n = self.parser.previous.str.len - 1;
         // remove quotes
         const value = self.gc.copyString(self.parser.previous.str[1..n]) catch |err| {
@@ -568,7 +569,7 @@ const CompileContext = struct {
         self.emitConstant(.{ .obj = value.asObj() });
     }
 
-    fn namedVariable(self: *Self, name: Token, canAssign: bool) void {
+    fn namedVariable(self: *Self, name: Token, can_assign: bool) void {
         var getOp = OpCode.GetLocal;
         var setOp = OpCode.SetLocal;
         var arg = self.resolveLocal(&name);
@@ -582,7 +583,7 @@ const CompileContext = struct {
             setOp = .SetGlobal;
             arg = self.identifierConstant(&name);
         }
-        if (canAssign and self.match(.Equal)) {
+        if (can_assign and self.match(.Equal)) {
             self.expression();
             self.emitOpCode(setOp);
             self.emitByte(arg.?);
@@ -592,12 +593,12 @@ const CompileContext = struct {
         }
     }
 
-    fn variable(self: *Self, canAssign: bool) void {
-        self.namedVariable(self.parser.previous, canAssign);
+    fn variable(self: *Self, can_assign: bool) void {
+        self.namedVariable(self.parser.previous, can_assign);
     }
 
-    fn unary(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn unary(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const operator = &self.parser.previous;
         const operatorType = operator.type;
         self.parsePrecedence(.Unary);
@@ -611,8 +612,8 @@ const CompileContext = struct {
         }
     }
 
-    fn binary(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn binary(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const operator = &self.parser.previous;
         const operatorType = operator.type;
         const rule = ParseRule.get(operatorType);
@@ -636,15 +637,28 @@ const CompileContext = struct {
         }
     }
 
-    fn call(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn call(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const arg_count = self.argumentList();
         self.emitOpCode(.Call);
         self.emitByte(arg_count);
     }
 
-    fn literal(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn dot(self: *Self, can_assign: bool) void {
+        self.consume(.Identifier, "Expect property name after '.'.");
+        const name = self.identifierConstant(&self.parser.previous);
+        if (can_assign and self.match(.Equal)) {
+            self.expression();
+            self.emitOpCode(.SetProperty);
+            self.emitByte(name);
+        } else {
+            self.emitOpCode(.GetProperty);
+            self.emitByte(name);
+        }
+    }
+
+    fn literal(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const lit = self.parser.previous.type;
         switch (lit) {
             .False => self.emitOpCode(.False),
@@ -664,8 +678,8 @@ const CompileContext = struct {
             self.errorAtPrevious("Expect expression.", CompileError.Compile);
             return;
         };
-        const canAssign = @enumToInt(precedence) <= @enumToInt(Precedence.Assignment);
-        prefix_rule(self, canAssign);
+        const can_assign = @enumToInt(precedence) <= @enumToInt(Precedence.Assignment);
+        prefix_rule(self, can_assign);
         while (@enumToInt(precedence) <= @enumToInt(ParseRule.get(self.parser.current.type).precedence)) {
             self.advance();
             const rule1 = ParseRule.get(self.parser.previous.type);
@@ -673,10 +687,10 @@ const CompileContext = struct {
                 self.errorAtPrevious("ICE: No infix rule found", CompileError.ICE);
                 return;
             };
-            infix_rule(self, canAssign);
+            infix_rule(self, can_assign);
         }
 
-        if (canAssign and self.match(.Equal)) {
+        if (can_assign and self.match(.Equal)) {
             self.errorAtPrevious("Invalid assignment target.", CompileError.Compile);
         }
     }
@@ -811,8 +825,8 @@ const CompileContext = struct {
         return arg_count;
     }
 
-    fn and_(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn and_(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const endJump = self.emitJump(.JumpIfFalse);
 
         self.emitOpCode(.Pop);
@@ -821,8 +835,8 @@ const CompileContext = struct {
         self.patchJump(endJump);
     }
 
-    fn or_(self: *Self, canAssign: bool) void {
-        _ = canAssign;
+    fn or_(self: *Self, can_assign: bool) void {
+        _ = can_assign;
         const elseJump = self.emitJump(.JumpIfFalse);
         const endJump = self.emitJump(.Jump);
 

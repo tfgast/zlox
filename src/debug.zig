@@ -96,6 +96,12 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .SetUpvalue => {
             return byteInstruction("OP_SET_UPVALUE", c, offset);
         },
+        .GetProperty => {
+            return constantInstruction("OP_GET_PROPERTY", c, offset);
+        },
+        .SetProperty => {
+            return constantInstruction("OP_SET_PROPERTY", c, offset);
+        },
         .Equal => {
             return simpleInstruction("OP_EQUAL", offset);
         },

@@ -295,6 +295,36 @@ pub const VM = struct {
                     const slot = self.read_byte();
                     self.frame[0].closure.upvalues[slot].?.location.* = self.peek(0);
                 },
+                .GetProperty => {
+                    if (!self.peek(0).isInstance()) {
+                        self.runtimeError("Only instances have properties", .{});
+                        return InterpretError.Runtime;
+                    }
+                    const instance = self.peek(0).asInstance();
+                    const name = self.read_string();
+                    if (instance.fields.get(name)) |v| {
+                        _ = self.pop(); //Instance
+                        self.push(v.*);
+                    } else {
+                        self.runtimeError("Undefined property '{s}'", .{name});
+                        return InterpretError.Runtime;
+                    }
+                },
+                .SetProperty => {
+                    if (!self.peek(1).isInstance()) {
+                        self.runtimeError("Only instances have properties", .{});
+                        return InterpretError.Runtime;
+                    }
+                    const instance = self.peek(1).asInstance();
+                    const name = self.read_string();
+                    _ = instance.fields.set(name, self.peek(0)) catch {
+                        self.runtimeError("Out of Memory", .{});
+                        return InterpretError.Runtime;
+                    };
+                    var v = self.pop();
+                    _ = self.pop(); //Instance
+                    self.push(v);
+                },
                 .Equal => {
                     const b = self.pop();
                     const a = self.pop();
