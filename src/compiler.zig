@@ -326,10 +326,10 @@ const CompileContext = struct {
             return self.errorAtPrevious("Could not allocate for function", err);
         };
         self.compiler.current = &context;
+        context.enclosing = self;
         context.obj_function.name = self.gc.copyString(self.parser.previous.str) catch |err| {
             return self.errorAtPrevious("Could not allocate for function name", err);
         };
-        context.enclosing = self;
         context.beginScope();
 
         context.consume(.LeftParen, "Expect '(' after function name.");

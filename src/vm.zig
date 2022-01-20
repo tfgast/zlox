@@ -360,8 +360,8 @@ pub const VM = struct {
     }
 
     fn concatenate(self: *Self) InterpretError!void {
-        const b = self.pop().asString();
-        const a = self.pop().asString();
+        const b = self.peek(0).asString();
+        const a = self.peek(0).asString();
         const chars = std.mem.concat(self.gc.allocator, u8, &[_][]const u8{ a.str, b.str }) catch {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
@@ -373,6 +373,8 @@ pub const VM = struct {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
         };
+        _ = self.pop();
+        _ = self.pop();
         self.push(.{ .obj = result.asObj() });
     }
 

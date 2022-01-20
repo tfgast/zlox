@@ -213,7 +213,6 @@ pub const GarbageCollector = struct {
     }
 
     pub fn collectGarbage(self: *Self) void {
-        @breakpoint();
         std.log.debug("-- gc begin", .{});
         self.markRoots();
         self.traceReferences();
