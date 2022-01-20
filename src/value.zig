@@ -12,6 +12,7 @@ const ObjNative = object.ObjNative;
 const ObjUpvalue = object.ObjUpvalue;
 const ObjInstance = object.ObjInstance;
 const ObjClass = object.ObjClass;
+const ObjBoundMethod = object.ObjBoundMethod;
 
 pub const ValueType = enum { boolean, nil, number, obj };
 
@@ -77,6 +78,10 @@ pub const Value = union(ValueType) {
         return self.isObjType(.Instance);
     }
 
+    pub fn isBoundMethod(self: Value) bool {
+        return self.isObjType(.BoundMethod);
+    }
+
     pub fn asString(self: Value) *ObjString {
         std.debug.assert(self.isString());
         return self.obj.asString();
@@ -110,6 +115,11 @@ pub const Value = union(ValueType) {
     pub fn asInstance(self: Value) *ObjInstance {
         std.debug.assert(self.isInstance());
         return self.obj.asInstance();
+    }
+
+    pub fn asBoundMethod(self: Value) *ObjBoundMethod {
+        std.debug.assert(self.isBoundMethod());
+        return self.obj.asBoundMethod();
     }
 
     pub fn asStringBytes(self: Value) []u8 {
@@ -149,6 +159,9 @@ pub const Value = union(ValueType) {
                     },
                     .Upvalue => {
                         try writer.print("{s}", .{obj.asUpvalue()});
+                    },
+                    .BoundMethod => {
+                        try writer.print("{s}", .{obj.asBoundMethod()});
                     },
                 }
             },

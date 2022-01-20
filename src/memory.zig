@@ -11,6 +11,7 @@ const VM = @import("vm.zig").VM;
 const Compiler = @import("compiler.zig").Compiler;
 
 const object = @import("object.zig");
+const ToType = object.ToType;
 const Obj = object.Obj;
 const ObjType = object.ObjType;
 const ObjString = object.ObjString;
@@ -20,6 +21,7 @@ const ObjUpvalue = object.ObjUpvalue;
 const ObjNative = object.ObjNative;
 const ObjClass = object.ObjClass;
 const ObjInstance = object.ObjInstance;
+const ObjBoundMethod = object.ObjBoundMethod;
 const NativeFn = object.NativeFn;
 
 pub const GrayStack = std.ArrayList(*Obj);
@@ -64,44 +66,8 @@ pub const GarbageCollector = struct {
         self.inner_allocator.destroy(self);
     }
 
-    fn allocateObject(self: *Self, comptime T: type, comptime ty: ObjType) !*T {
-        switch (ty) {
-            .String => {
-                comptime {
-                    assert(T == ObjString);
-                }
-            },
-            .Function => {
-                comptime {
-                    assert(T == ObjFunction);
-                }
-            },
-            .Closure => {
-                comptime {
-                    assert(T == ObjClosure);
-                }
-            },
-            .Native => {
-                comptime {
-                    assert(T == ObjNative);
-                }
-            },
-            .Upvalue => {
-                comptime {
-                    assert(T == ObjUpvalue);
-                }
-            },
-            .Class => {
-                comptime {
-                    assert(T == ObjClass);
-                }
-            },
-            .Instance => {
-                comptime {
-                    assert(T == ObjInstance);
-                }
-            },
-        }
+    fn allocateObject(self: *Self, comptime ty: ObjType) !*ToType(ty) {
+        const T = ToType(ty);
         var o = try self.allocator.create(T);
         o.obj.type = ty;
         o.obj.next = self.objects;
@@ -112,7 +78,7 @@ pub const GarbageCollector = struct {
     }
 
     pub fn newFunction(self: *Self) !*ObjFunction {
-        const function = try self.allocateObject(ObjFunction, .Function);
+        const function = try self.allocateObject(.Function);
         function.arity = 0;
         function.upvalue_count = 0;
         function.chunk = Chunk.init(self);
@@ -121,20 +87,21 @@ pub const GarbageCollector = struct {
     }
 
     pub fn newClass(self: *Self, name: *ObjString) !*ObjClass {
-        const class = try self.allocateObject(ObjClass, .Class);
+        const class = try self.allocateObject(.Class);
         class.name = name;
+        class.methods = Table.init(self);
         return class;
     }
 
     pub fn newInstance(self: *Self, class: *ObjClass) !*ObjInstance {
-        const instance = try self.allocateObject(ObjInstance, .Instance);
+        const instance = try self.allocateObject(.Instance);
         instance.class = class;
         instance.fields = Table.init(self);
         return instance;
     }
 
     pub fn newNative(self: *Self, function: NativeFn) !*ObjNative {
-        const native = try self.allocateObject(ObjNative, .Native);
+        const native = try self.allocateObject(.Native);
         native.function = function;
         return native;
     }
@@ -144,18 +111,25 @@ pub const GarbageCollector = struct {
         errdefer self.allocator.free(upvalues);
         std.mem.set(?*ObjUpvalue, upvalues, null);
 
-        const closure = try self.allocateObject(ObjClosure, .Closure);
+        const closure = try self.allocateObject(.Closure);
         closure.function = function;
         closure.upvalues = upvalues;
         return closure;
     }
 
     pub fn newUpvalue(self: *Self, slot: *Value) !*ObjUpvalue {
-        const upvalue = try self.allocateObject(ObjUpvalue, .Upvalue);
+        const upvalue = try self.allocateObject(.Upvalue);
         upvalue.location = slot;
         upvalue.closed = .nil;
         upvalue.next = null;
         return upvalue;
+    }
+
+    pub fn newBoundMethod(self: *Self, receiver: Value, method: *ObjClosure) !*ObjBoundMethod {
+        const bound = try self.allocateObject(.BoundMethod);
+        bound.receiver = receiver;
+        bound.method = method;
+        return bound;
     }
 
     pub fn copyString(self: *Self, chars: []const u8) !*ObjString {
@@ -179,7 +153,7 @@ pub const GarbageCollector = struct {
         return self.allocateString(owned_chars, hash);
     }
     fn allocateString(self: *Self, owned_chars: []u8, hash: u32) !*ObjString {
-        const string = try self.allocateObject(ObjString, .String);
+        const string = try self.allocateObject(.String);
         self.vm.push(.{ .obj = string.asObj() });
         defer _ = self.vm.pop();
         string.str = owned_chars;
@@ -221,6 +195,9 @@ pub const GarbageCollector = struct {
             .Instance => {
                 self.freeInstance(obj.asInstance());
             },
+            .BoundMethod => {
+                self.freeBoundMethod(obj.asBoundMethod());
+            },
         }
     }
 
@@ -248,12 +225,17 @@ pub const GarbageCollector = struct {
     }
 
     pub fn freeClass(self: *Self, class: *ObjClass) void {
+        class.methods.free();
         self.allocator.destroy(class);
     }
 
     pub fn freeInstance(self: *Self, instance: *ObjInstance) void {
         instance.fields.free();
         self.allocator.destroy(instance);
+    }
+
+    pub fn freeBoundMethod(self: *Self, bound: *ObjBoundMethod) void {
+        self.allocator.destroy(bound);
     }
 
     pub fn collectGarbage(self: *Self) void {
@@ -266,6 +248,7 @@ pub const GarbageCollector = struct {
         std.log.debug("-- gc end", .{});
         self.next_gc = self.bytes_allocated * 2;
         std.log.debug("   collected {d} bytes (from {d} to {d}) next at {d}", .{ before - self.bytes_allocated, before, self.bytes_allocated, self.next_gc });
+        // @breakpoint();
     }
 
     fn markRoots(self: *Self) void {
@@ -345,6 +328,7 @@ pub const GarbageCollector = struct {
             .Class => {
                 const class = obj.asClass();
                 self.markObj(class.name.asObj());
+                self.markTable(&class.methods);
             },
             .Instance => {
                 const instance = obj.asInstance();
@@ -358,6 +342,11 @@ pub const GarbageCollector = struct {
                     const upvalue = maybe_upvalue orelse continue;
                     self.markObj(upvalue.asObj());
                 }
+            },
+            .BoundMethod => {
+                const bound = obj.asBoundMethod();
+                self.markValue(bound.receiver);
+                self.markObj(bound.method.asObj());
             },
             else => {},
         }
@@ -385,7 +374,8 @@ pub const GarbageCollector = struct {
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {
         self.bytes_allocated += len;
-        if (builtin.mode == std.builtin.Mode.Debug) {
+        // if (builtin.mode == std.builtin.Mode.Debug) {
+        if (false) {
             self.collectGarbage();
         } else if (self.bytes_allocated > self.next_gc) {
             self.collectGarbage();
@@ -394,7 +384,8 @@ pub const GarbageCollector = struct {
     }
     fn resizeFn(self: *Self, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
         self.bytes_allocated += new_len - buf.len;
-        if (builtin.mode == std.builtin.Mode.Debug) {
+        // if (builtin.mode == std.builtin.Mode.Debug) {
+        if (false) {
             if (new_len > buf.len) {
                 self.collectGarbage();
             }

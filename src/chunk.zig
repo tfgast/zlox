@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 
 // Declare an enum.
 pub const OpCode =
-    enum(u8) { Constant, ConstantLong, Nil, True, False, Pop, GetLocal, SetLocal, GetGlobal, DefineGlobal, SetGlobal, GetUpvalue, SetUpvalue, GetProperty, SetProperty, Equal, Greater, Less, Add, Subtract, Multiply, Divide, Not, Negate, Print, Jump, JumpIfFalse, Loop, Call, Closure, CloseUpvalue, Return, Class, _ };
+    enum(u8) { Constant, ConstantLong, Nil, True, False, Pop, GetLocal, SetLocal, GetGlobal, DefineGlobal, SetGlobal, GetUpvalue, SetUpvalue, GetProperty, SetProperty, Equal, Greater, Less, Add, Subtract, Multiply, Divide, Not, Negate, Print, Jump, JumpIfFalse, Loop, Call, Closure, CloseUpvalue, Return, Class, Method, _ };
 
 pub const Chunk = struct {
     constants: value.Array,

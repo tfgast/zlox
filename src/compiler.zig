@@ -59,6 +59,7 @@ const ParseRule = struct {
         const or_ = CompileContext.or_;
         const call = CompileContext.call;
         const dot = CompileContext.dot;
+        const this = CompileContext.this;
         return switch (ty) {
             .LeftParen => .{ .prefix = grouping, .infix = call, .precedence = .Call },
             .RightParen => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -94,7 +95,7 @@ const ParseRule = struct {
             .Print => .{ .prefix = null, .infix = null, .precedence = .None },
             .Return => .{ .prefix = null, .infix = null, .precedence = .None },
             .Super => .{ .prefix = null, .infix = null, .precedence = .None },
-            .This => .{ .prefix = null, .infix = null, .precedence = .None },
+            .This => .{ .prefix = this, .infix = null, .precedence = .None },
             .True => .{ .prefix = literal, .infix = null, .precedence = .None },
             .Var => .{ .prefix = null, .infix = null, .precedence = .None },
             .While => .{ .prefix = null, .infix = null, .precedence = .None },
@@ -118,16 +119,17 @@ pub const Upvalue = struct {
     is_local: bool = true,
 };
 
-pub const FunctionType = enum { Function, Script };
+pub const FunctionType = enum { Function, Script, Method };
 
 pub const Compiler = struct {
     const Self = Compiler;
 
     gc: *GarbageCollector,
     current: ?*CompileContext,
+    current_class: ?*ClassCompiler,
 
     pub fn init(gc: *GarbageCollector) Self {
-        return Self{ .gc = gc, .current = null };
+        return Self{ .gc = gc, .current = null, .current_class = null };
     }
 
     pub fn compile(self: *Self, source: []const u8) CompileError!*ObjFunction {
@@ -147,6 +149,10 @@ pub const Compiler = struct {
     }
 };
 
+const ClassCompiler = struct {
+    enclosing: ?*ClassCompiler,
+};
+
 const CompileContext = struct {
     const Self = CompileContext;
     enclosing: ?*Self = null,
@@ -164,7 +170,11 @@ const CompileContext = struct {
 
     fn init(gc: *GarbageCollector, compiler: *Compiler, parser: *Parser, ty: FunctionType) !Self {
         var f = try gc.newFunction();
-        return Self{ .gc = gc, .compiler = compiler, .parser = parser, .obj_function = f, .type = ty };
+        var r = Self{ .gc = gc, .compiler = compiler, .parser = parser, .obj_function = f, .type = ty };
+        if (ty == .Method) {
+            r.locals[0].name.str = "this";
+        }
+        return r;
     }
 
     fn currentChunk(self: *Self) *Chunk {
@@ -362,6 +372,16 @@ const CompileContext = struct {
         self.compiler.current = self;
     }
 
+    fn method(self: *Self) void {
+        self.consume(.Identifier, "Expect method name.");
+        const constant = self.identifierConstant(&self.parser.previous);
+
+        self.function(.Method);
+
+        self.emitOpCode(.Method);
+        self.emitByte(constant);
+    }
+
     fn declaration(self: *Self) void {
         if (self.match(.Class)) {
             self.classDeclaration();
@@ -379,15 +399,27 @@ const CompileContext = struct {
 
     fn classDeclaration(self: *Self) void {
         self.consume(.Identifier, "Expect class name.");
-        const name_constant = self.identifierConstant(&self.parser.previous);
+        const class_name = self.parser.previous;
+        const name_constant = self.identifierConstant(&class_name);
 
         self.declareVariable();
         self.emitOpCode(.Class);
         self.emitByte(name_constant);
         self.defineVariable(name_constant);
 
+        var class_compiler = ClassCompiler{ .enclosing = self.compiler.current_class };
+        self.compiler.current_class = &class_compiler;
+
+        self.namedVariable(class_name, false);
+
         self.consume(.LeftBrace, "Expect '{' before class body.");
+        while (!self.check(.RightBrace) and !self.check(.EOF)) {
+            self.method();
+        }
         self.consume(.RightBrace, "Expect '}' after class body.");
+        self.emitOpCode(.Pop);
+
+        self.compiler.current_class = self.compiler.current_class.?.enclosing;
     }
 
     fn funDeclaration(self: *Self) void {
@@ -595,6 +627,14 @@ const CompileContext = struct {
 
     fn variable(self: *Self, can_assign: bool) void {
         self.namedVariable(self.parser.previous, can_assign);
+    }
+
+    fn this(self: *Self, can_assign: bool) void {
+        _ = can_assign;
+        if (self.compiler.current_class == null) {
+            self.errorAtPrevious("Can't use 'this' outside of class.", CompileError.Compile);
+        }
+        self.variable(false);
     }
 
     fn unary(self: *Self, can_assign: bool) void {

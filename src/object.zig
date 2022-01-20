@@ -4,7 +4,7 @@ const Table = @import("table.zig").Table;
 const Value = @import("value.zig").Value;
 const RuntimeError = @import("vm.zig").RuntimeError;
 
-pub const ObjType = enum { Class, Instance, String, Closure, Function, Native, Upvalue };
+pub const ObjType = enum { Class, Instance, String, Closure, Function, Native, Upvalue, BoundMethod };
 
 pub fn ToType(comptime ty: ObjType) type {
     return switch (ty) {
@@ -13,8 +13,9 @@ pub fn ToType(comptime ty: ObjType) type {
         .String => ObjString,
         .Closure => ObjClosure,
         .Function => ObjFunction,
-        .Native => ObjFunction,
+        .Native => ObjNative,
         .Upvalue => ObjUpvalue,
+        .BoundMethod => ObjBoundMethod,
     };
 }
 
@@ -23,6 +24,11 @@ pub const Obj = struct {
     type: ObjType,
     next: ?*Self,
     is_marked: bool,
+
+    pub fn as(self: *Self, comptime ty: ObjType) *ToType(ty) {
+        std.debug.assert(self.type == ty);
+        return @ptrCast(*ToType(ty), self);
+    }
 
     pub fn asString(self: *Self) *ObjString {
         std.debug.assert(self.type == .String);
@@ -57,6 +63,11 @@ pub const Obj = struct {
     pub fn asInstance(self: *Self) *ObjInstance {
         std.debug.assert(self.type == .Instance);
         return @ptrCast(*ObjInstance, self);
+    }
+
+    pub fn asBoundMethod(self: *Self) *ObjBoundMethod {
+        std.debug.assert(self.type == .BoundMethod);
+        return @ptrCast(*ObjBoundMethod, self);
     }
 
     pub fn asStringBytes(self: *Self) []u8 {
@@ -194,6 +205,7 @@ pub const ObjClass = struct {
 
     obj: Obj,
     name: *ObjString,
+    methods: Table,
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
@@ -231,5 +243,28 @@ pub const ObjInstance = struct {
         _ = fmt;
         _ = options;
         try writer.print("{s} instance", .{self.class.name});
+    }
+};
+
+pub const ObjBoundMethod = struct {
+    const Self = ObjBoundMethod;
+
+    obj: Obj,
+    receiver: Value,
+    method: *ObjClosure,
+
+    pub fn asObj(self: *Self) *Obj {
+        return &self.obj;
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{s}", .{self.method.function});
     }
 };

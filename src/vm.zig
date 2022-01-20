@@ -10,6 +10,8 @@ const object = @import("object.zig");
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
 const ObjClosure = object.ObjClosure;
+const ObjClass = object.ObjClass;
+const ObjBoundMethod = object.ObjBoundMethod;
 const ObjUpvalue = object.ObjUpvalue;
 const NativeFn = object.NativeFn;
 
@@ -305,8 +307,7 @@ pub const VM = struct {
                     if (instance.fields.get(name)) |v| {
                         _ = self.pop(); //Instance
                         self.push(v.*);
-                    } else {
-                        self.runtimeError("Undefined property '{s}'", .{name});
+                    } else if (!self.bindMethod(instance.class, name)) {
                         return InterpretError.Runtime;
                     }
                 },
@@ -374,6 +375,12 @@ pub const VM = struct {
                     };
                     self.push(.{ .obj = class.asObj() });
                 },
+                .Method => {
+                    self.defineMethod(self.read_string()) catch {
+                        self.runtimeError("Out of Memory", .{});
+                        return InterpretError.Runtime;
+                    };
+                },
                 _ => {
                     std.debug.print("Unknown opcode {d}", .{instruction});
                 },
@@ -393,7 +400,7 @@ pub const VM = struct {
 
     fn concatenate(self: *Self) InterpretError!void {
         const b = self.peek(0).asString();
-        const a = self.peek(0).asString();
+        const a = self.peek(1).asString();
         const chars = std.mem.concat(self.gc.allocator, u8, &[_][]const u8{ a.str, b.str }) catch {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
@@ -415,6 +422,11 @@ pub const VM = struct {
             .obj => |obj| {
                 switch (obj.type) {
                     .Closure => return self.call(obj.asClosure(), arg_count),
+                    .BoundMethod => {
+                        const bound = obj.asBoundMethod();
+                        (self.stack_top - arg_count - 1)[0] = bound.receiver;
+                        return self.call(bound.method, arg_count);
+                    },
                     .Class => {
                         const class = obj.asClass();
                         const instance = self.gc.newInstance(class) catch {
@@ -492,6 +504,26 @@ pub const VM = struct {
             upvalue.location = &upvalue.closed;
             self.open_upvalues = upvalue.next;
         }
+    }
+
+    fn defineMethod(self: *Self, name: *ObjString) !void {
+        const method = self.peek(0);
+        var class = self.peek(1).asClass();
+        _ = try class.methods.set(name, method);
+    }
+
+    fn bindMethod(self: *Self, class: *ObjClass, name: *ObjString) bool {
+        const method = class.methods.get(name) orelse {
+            self.runtimeError("Undefined property '{s}'", .{name});
+            return false;
+        };
+        const bound = self.gc.newBoundMethod(self.peek(0), method.asClosure()) catch {
+            self.runtimeError("Out of Memory", .{});
+            return false;
+        };
+        _ = self.pop();
+        self.push(.{ .obj = bound.asObj() });
+        return true;
     }
 };
 
