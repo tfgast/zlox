@@ -362,7 +362,9 @@ const CompileContext = struct {
     }
 
     fn declaration(self: *Self) void {
-        if (self.match(.Fun)) {
+        if (self.match(.Class)) {
+            self.classDeclaration();
+        } else if (self.match(.Fun)) {
             self.funDeclaration();
         } else if (self.match(.Var)) {
             self.varDeclaration();
@@ -372,6 +374,19 @@ const CompileContext = struct {
         if (self.parser.panicMode) {
             self.synchronize();
         }
+    }
+
+    fn classDeclaration(self: *Self) void {
+        self.consume(.Identifier, "Expect class name.");
+        const name_constant = self.identifierConstant(&self.parser.previous);
+
+        self.declareVariable();
+        self.emitOpCode(.Class);
+        self.emitByte(name_constant);
+        self.defineVariable(name_constant);
+
+        self.consume(.LeftBrace, "Expect '{' before class body.");
+        self.consume(.RightBrace, "Expect '}' after class body.");
     }
 
     fn funDeclaration(self: *Self) void {

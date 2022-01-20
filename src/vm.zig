@@ -94,9 +94,7 @@ pub const VM = struct {
             const function = frame.closure.function;
             const offset = @ptrToInt(frame.ip) - @ptrToInt(function.chunk.code.ptr) - 1;
             const line = frame.closure.function.chunk.getLine(offset);
-            std.debug.print("[line {d}] in ", .{line});
-            function.print();
-            std.debug.print("\n", .{});
+            std.debug.print("[line {d}] in {} \n", .{ line, function });
         }
         self.resetStack();
     }
@@ -163,9 +161,7 @@ pub const VM = struct {
                 const n = (@ptrToInt(self.stack_top) - @ptrToInt(&self.stack)) / @sizeOf(Value);
                 var slice = self.stack[0..n];
                 for (slice) |v| {
-                    std.debug.print("[ ", .{});
-                    value.print(v);
-                    std.debug.print(" ]", .{});
+                    std.debug.print("[ {s} ]", .{v});
                 }
                 std.debug.print("\n", .{});
                 _ = debug.disassembleInstruction(&self.frame[0].closure.function.chunk, @ptrToInt(self.frame[0].ip) - @ptrToInt(self.frame[0].closure.function.chunk.code.ptr));
@@ -173,8 +169,7 @@ pub const VM = struct {
             const instruction = self.read_byte();
             switch (@intToEnum(OpCode, instruction)) {
                 .Print => {
-                    value.print(self.pop());
-                    std.debug.print("\n", .{});
+                    std.debug.print("{s}\n", .{self.pop()});
                 },
                 .Jump => {
                     const offset = self.read_short();
@@ -342,6 +337,13 @@ pub const VM = struct {
                     }
                     self.push(.{ .number = -self.pop().number });
                 },
+                .Class => {
+                    const class = self.gc.newClass(self.read_string()) catch {
+                        self.runtimeError("Out of Memory", .{});
+                        return InterpretError.Runtime;
+                    };
+                    self.push(.{ .obj = class.asObj() });
+                },
                 _ => {
                     std.debug.print("Unknown opcode {d}", .{instruction});
                 },
@@ -383,6 +385,15 @@ pub const VM = struct {
             .obj => |obj| {
                 switch (obj.type) {
                     .Closure => return self.call(obj.asClosure(), arg_count),
+                    .Class => {
+                        const class = obj.asClass();
+                        const instance = self.gc.newInstance(class) catch {
+                            self.runtimeError("Memory allocation failed.", .{});
+                            return false;
+                        };
+                        (self.stack_top - arg_count - 1)[0] = .{ .obj = instance.asObj() };
+                        return true;
+                    },
                     .Native => {
                         const native = obj.asNative();
                         const result = native.function((self.stack_top - arg_count)[0..arg_count]) catch {

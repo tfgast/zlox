@@ -95,16 +95,46 @@ pub const Value = union(ValueType) {
     pub fn asStringBytes(self: Value) []u8 {
         return self.asString().str;
     }
-};
-
-pub fn print(value: Value) void {
-    switch (value) {
-        .boolean => |boolean| std.debug.print("{}", .{boolean}),
-        .nil => std.debug.print("nil", .{}),
-        .number => |number| std.debug.print("{d}", .{number}),
-        .obj => |obj| obj.print(),
+    pub fn format(
+        self: Value,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        switch (self) {
+            .boolean => |boolean| try writer.print("{}", .{boolean}),
+            .nil => try writer.print("nil", .{}),
+            .number => |number| try writer.print("{d}", .{number}),
+            .obj => |obj| {
+                switch (obj.type) {
+                    .String => {
+                        try writer.print("{s}", .{obj.asString()});
+                    },
+                    .Class => {
+                        try writer.print("{s}", .{obj.asClass()});
+                    },
+                    .Instance => {
+                        try writer.print("{s}", .{obj.asInstance()});
+                    },
+                    .Function => {
+                        try writer.print("{s}", .{obj.asFunction()});
+                    },
+                    .Closure => {
+                        try writer.print("{s}", .{obj.asClosure()});
+                    },
+                    .Native => {
+                        try writer.print("{s}", .{obj.asNative()});
+                    },
+                    .Upvalue => {
+                        try writer.print("{s}", .{obj.asUpvalue()});
+                    },
+                }
+            },
+        }
     }
-}
+};
 
 pub const Entry = struct {
     key: ?*ObjString,

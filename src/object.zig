@@ -1,9 +1,22 @@
 const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
+const Table = @import("table.zig").Table;
 const Value = @import("value.zig").Value;
 const RuntimeError = @import("vm.zig").RuntimeError;
 
-pub const ObjType = enum { String, Closure, Function, Native, Upvalue };
+pub const ObjType = enum { Class, Instance, String, Closure, Function, Native, Upvalue };
+
+pub fn ToType(comptime ty: ObjType) type {
+    return switch (ty) {
+        .Class => ObjClass,
+        .Instance => ObjInstance,
+        .String => ObjString,
+        .Closure => ObjClosure,
+        .Function => ObjFunction,
+        .Native => ObjFunction,
+        .Upvalue => ObjUpvalue,
+    };
+}
 
 pub const Obj = struct {
     const Self = Obj;
@@ -36,48 +49,18 @@ pub const Obj = struct {
         return @ptrCast(*ObjUpvalue, self);
     }
 
+    pub fn asClass(self: *Self) *ObjClass {
+        std.debug.assert(self.type == .Class);
+        return @ptrCast(*ObjClass, self);
+    }
+
+    pub fn asInstance(self: *Self) *ObjInstance {
+        std.debug.assert(self.type == .Instance);
+        return @ptrCast(*ObjInstance, self);
+    }
+
     pub fn asStringBytes(self: *Self) []u8 {
         return self.asString().str;
-    }
-
-    pub fn toStr(self: *Self) []const u8 {
-        switch (self.type) {
-            .String => {
-                return self.asStringBytes();
-            },
-            .Function => {
-                return self.asFunction().toStr();
-            },
-            .Closure => {
-                return self.asClosure().function.toStr();
-            },
-            .Native => {
-                return "native fn";
-            },
-            .Upvalue => {
-                return "upvalue";
-            },
-        }
-    }
-
-    pub fn print(self: *Self) void {
-        switch (self.type) {
-            .String => {
-                std.debug.print("{s}", .{self.asStringBytes()});
-            },
-            .Function => {
-                self.asFunction().print();
-            },
-            .Closure => {
-                self.asClosure().function.print();
-            },
-            .Native => {
-                std.debug.print("<native fn>", .{});
-            },
-            .Upvalue => {
-                std.debug.print("upvalue", .{});
-            },
-        }
     }
 };
 
@@ -90,6 +73,17 @@ pub const ObjString = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{s}", .{self.str});
     }
 };
 
@@ -106,18 +100,18 @@ pub const ObjFunction = struct {
         return &self.obj;
     }
 
-    pub fn print(self: *Self) void {
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
         if (self.name) |name| {
-            std.debug.print("<fn {s}>", .{name.str});
+            try writer.print("<fn {s}>", .{name.str});
         } else {
-            std.debug.print("<script>", .{});
-        }
-    }
-    pub fn toStr(self: *Self) []const u8 {
-        if (self.name) |name| {
-            return name.str;
-        } else {
-            return "<script>";
+            try writer.writeAll("<script>");
         }
     }
 };
@@ -133,6 +127,18 @@ pub const ObjNative = struct {
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
     }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = self;
+        _ = fmt;
+        _ = options;
+        try writer.writeAll("<native fn>");
+    }
 };
 
 pub const ObjClosure = struct {
@@ -144,6 +150,17 @@ pub const ObjClosure = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{s}", .{self.function});
     }
 };
 
@@ -157,5 +174,62 @@ pub const ObjUpvalue = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = self;
+        _ = fmt;
+        _ = options;
+        try writer.writeAll("upvalue");
+    }
+};
+
+pub const ObjClass = struct {
+    const Self = ObjClass;
+
+    obj: Obj,
+    name: *ObjString,
+
+    pub fn asObj(self: *Self) *Obj {
+        return &self.obj;
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{s}", .{self.name});
+    }
+};
+
+pub const ObjInstance = struct {
+    const Self = ObjInstance;
+
+    obj: Obj,
+    class: *ObjClass,
+    fields: Table,
+
+    pub fn asObj(self: *Self) *Obj {
+        return &self.obj;
+    }
+
+    pub fn format(
+        self: Self,
+        comptime fmt: []const u8,
+        options: std.fmt.FormatOptions,
+        writer: anytype,
+    ) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("{s} instance", .{self.class.name});
     }
 };

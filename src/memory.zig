@@ -18,6 +18,8 @@ const ObjFunction = object.ObjFunction;
 const ObjClosure = object.ObjClosure;
 const ObjUpvalue = object.ObjUpvalue;
 const ObjNative = object.ObjNative;
+const ObjClass = object.ObjClass;
+const ObjInstance = object.ObjInstance;
 const NativeFn = object.NativeFn;
 
 pub const GrayStack = std.ArrayList(*Obj);
@@ -89,6 +91,16 @@ pub const GarbageCollector = struct {
                     assert(T == ObjUpvalue);
                 }
             },
+            .Class => {
+                comptime {
+                    assert(T == ObjClass);
+                }
+            },
+            .Instance => {
+                comptime {
+                    assert(T == ObjInstance);
+                }
+            },
         }
         var o = try self.allocator.create(T);
         o.obj.type = ty;
@@ -106,6 +118,19 @@ pub const GarbageCollector = struct {
         function.chunk = Chunk.init(self);
         function.name = null;
         return function;
+    }
+
+    pub fn newClass(self: *Self, name: *ObjString) !*ObjClass {
+        const class = try self.allocateObject(ObjClass, .Class);
+        class.name = name;
+        return class;
+    }
+
+    pub fn newInstance(self: *Self, class: *ObjClass) !*ObjInstance {
+        const instance = try self.allocateObject(ObjInstance, .Instance);
+        instance.class = class;
+        instance.fields = Table.init(self);
+        return instance;
     }
 
     pub fn newNative(self: *Self, function: NativeFn) !*ObjNative {
@@ -190,6 +215,12 @@ pub const GarbageCollector = struct {
             .Upvalue => {
                 self.freeUpvalue(obj.asUpvalue());
             },
+            .Class => {
+                self.freeClass(obj.asClass());
+            },
+            .Instance => {
+                self.freeInstance(obj.asInstance());
+            },
         }
     }
 
@@ -214,6 +245,15 @@ pub const GarbageCollector = struct {
 
     pub fn freeUpvalue(self: *Self, upvalue: *ObjUpvalue) void {
         self.allocator.destroy(upvalue);
+    }
+
+    pub fn freeClass(self: *Self, class: *ObjClass) void {
+        self.allocator.destroy(class);
+    }
+
+    pub fn freeInstance(self: *Self, instance: *ObjInstance) void {
+        instance.fields.free();
+        self.allocator.destroy(instance);
     }
 
     pub fn collectGarbage(self: *Self) void {
@@ -262,7 +302,8 @@ pub const GarbageCollector = struct {
 
     fn markObj(self: *Self, obj: *Obj) void {
         if (obj.is_marked) return;
-        std.log.debug("{*} mark <{s}>", .{ obj, obj.toStr() });
+        const v = Value{ .obj = obj };
+        std.log.debug("{*} mark {s}", .{ obj, v });
         obj.is_marked = true;
         self.gray_stack.append(obj) catch {
             std.debug.panic("Failed to allocate for gray stack", .{});
@@ -290,7 +331,8 @@ pub const GarbageCollector = struct {
     }
 
     fn blackenObject(self: *Self, obj: *Obj) void {
-        std.log.debug("{*} blacken <{s}>", .{ obj, obj.toStr() });
+        const v = Value{ .obj = obj };
+        std.log.debug("{*} blacken {s}", .{ obj, v });
         switch (obj.type) {
             .Upvalue => self.markValue(obj.asUpvalue().closed),
             .Function => {
@@ -299,6 +341,15 @@ pub const GarbageCollector = struct {
                     self.markObj(name.asObj());
                 }
                 self.markArray(&function.chunk.constants);
+            },
+            .Class => {
+                const class = obj.asClass();
+                self.markObj(class.name.asObj());
+            },
+            .Instance => {
+                const instance = obj.asInstance();
+                self.markObj(instance.class.asObj());
+                self.markTable(&instance.fields);
             },
             .Closure => {
                 const closure = obj.asClosure();

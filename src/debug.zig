@@ -38,10 +38,8 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
             o += 1;
             const constant = c.code[o];
             o += 1;
-            print("{s:<16} {d: >4} ", .{ "OP_CLOSURE", constant });
             const v = c.constants.values[constant];
-            value.print(v);
-            print("\n", .{});
+            print("{s:<16} {d: >4} {s}\n", .{ "OP_CLOSURE", constant, v });
 
             const function = v.asFunction();
             var j: u8 = 0;
@@ -56,6 +54,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         },
         .CloseUpvalue => return simpleInstruction("OP_CLOSE_UPVALUE", offset),
         .Return => return simpleInstruction("OP_RETURN", offset),
+        .Class => {
+            return constantInstruction("OP_CLASS", c, offset);
+        },
         .Constant => {
             return constantInstruction("OP_CONSTANT", c, offset);
         },
@@ -142,17 +143,15 @@ fn byteInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {
 
 fn constantInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {
     const constant = c.code[offset + 1];
-    print("{s:<16} {d: >4} '", .{ name, constant });
-    value.print(c.constants.values[constant]);
-    print("'\n", .{});
+    const v = c.constants.values[constant];
+    print("{s:<16} {d: >4} '{s}'\n", .{ name, constant, v });
     return offset + 2;
 }
 
 fn constantLongInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {
     const constant = (@intCast(u32, c.code[offset + 3]) << 16) | (@intCast(u32, c.code[offset + 2]) << 8) | @intCast(u32, c.code[offset + 1]);
-    print("{s:<16} {d: >4} '", .{ name, constant });
-    value.print(c.constants.values[constant]);
-    print("'\n", .{});
+    const v = c.constants.values[constant];
+    print("{s:<16} {d: >4} '{s}'\n", .{ name, constant, v });
     return offset + 4;
 }
 
