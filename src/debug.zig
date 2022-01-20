@@ -33,6 +33,9 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
         .Call => {
             return byteInstruction("OP_CALL", c, offset);
         },
+        .Invoke => {
+            return invokeInstruction("OP_CALL", c, offset);
+        },
         .Closure => {
             var o = offset;
             o += 1;
@@ -155,6 +158,14 @@ fn constantInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {
     const v = c.constants.values[constant];
     print("{s:<16} {d: >4} '{s}'\n", .{ name, constant, v });
     return offset + 2;
+}
+
+fn invokeInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {
+    const constant = c.code[offset + 1];
+    const arg_count = c.code[offset + 2];
+    const v = c.constants.values[constant];
+    print("{s:<16} ({d} args) {d: >4} '{s}'\n", .{ name, arg_count, constant, v });
+    return offset + 3;
 }
 
 fn constantLongInstruction(name: []const u8, c: *chunk.Chunk, offset: usize) usize {

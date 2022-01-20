@@ -199,6 +199,14 @@ pub const VM = struct {
                     }
                     self.frame = base_frame + self.frame_count - 1;
                 },
+                .Invoke => {
+                    const method = self.read_string();
+                    const arg_count = self.read_byte();
+                    if (!self.invoke(method, arg_count)) {
+                        return InterpretError.Runtime;
+                    }
+                    self.frame = base_frame + self.frame_count - 1;
+                },
                 .CloseUpvalue => {
                     self.closeUpvalues(self.stack_top - 1);
                     _ = self.pop();
@@ -464,6 +472,30 @@ pub const VM = struct {
         }
         self.runtimeError("Can only call functions and classes.", .{});
         return false;
+    }
+
+    fn invoke(self: *Self, name: *ObjString, arg_count: u8) bool {
+        const receiver = self.peek(arg_count);
+        if (!receiver.isInstance()) {
+            self.runtimeError("Only instances have methods.", .{});
+            return false;
+        }
+        const instance = receiver.asInstance();
+
+        if (instance.fields.get(name)) |v| {
+            (self.stack_top - arg_count - 1)[0] = v.*;
+            return self.callValue(v.*, arg_count);
+        }
+
+        return self.invokeFromClass(instance.class, name, arg_count);
+    }
+
+    fn invokeFromClass(self: *Self, class: *ObjClass, name: *ObjString, arg_count: u8) bool {
+        const method = class.methods.get(name) orelse {
+            self.runtimeError("Undefined property '{s}'", .{name});
+            return false;
+        };
+        return self.call(method.asClosure(), arg_count);
     }
 
     fn call(self: *Self, closure: *ObjClosure, arg_count: u8) bool {

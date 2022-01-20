@@ -703,6 +703,11 @@ const CompileContext = struct {
             self.expression();
             self.emitOpCode(.SetProperty);
             self.emitByte(name);
+        } else if (self.match(.LeftParen)) {
+            const arg_count = self.argumentList();
+            self.emitOpCode(.Invoke);
+            self.emitByte(name);
+            self.emitByte(arg_count);
         } else {
             self.emitOpCode(.GetProperty);
             self.emitByte(name);
