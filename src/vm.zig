@@ -111,12 +111,12 @@ pub const VM = struct {
         _ = self.pop();
     }
 
-    fn push(self: *Self, v: Value) void {
+    pub fn push(self: *Self, v: Value) void {
         self.stack_top[0] = v;
         self.stack_top += 1;
     }
 
-    fn pop(self: *Self) Value {
+    pub fn pop(self: *Self) Value {
         self.stack_top -= 1;
         return self.stack_top[0];
     }

@@ -149,4 +149,13 @@ pub const Table = struct {
         self.gc.allocator.free(self.entries);
         self.entries = entries;
     }
+
+    pub fn removeWhite(self: *Self) void {
+        for (self.entries) |entry| {
+            const key = entry.key orelse continue;
+            if (!key.obj.is_marked) {
+                _ = self.delete(key);
+            }
+        }
+    }
 };

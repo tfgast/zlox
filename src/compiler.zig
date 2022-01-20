@@ -123,14 +123,16 @@ pub const Compiler = struct {
     const Self = Compiler;
 
     gc: *GarbageCollector,
+    current: ?*CompileContext,
 
     pub fn init(gc: *GarbageCollector) Self {
-        return Self{ .gc = gc };
+        return Self{ .gc = gc, .current = null };
     }
 
     pub fn compile(self: *Self, source: []const u8) CompileError!*ObjFunction {
         var parser = Parser{ .scanner = Scanner.init(source) };
-        var context = try CompileContext.init(self.gc, &parser, .Script);
+        var context = try CompileContext.init(self.gc, self, &parser, .Script);
+        self.current = &context;
         context.advance();
         while (!context.match(TokenType.EOF)) {
             context.declaration();
@@ -148,6 +150,7 @@ const CompileContext = struct {
     const Self = CompileContext;
     enclosing: ?*Self = null,
     gc: *GarbageCollector,
+    compiler: *Compiler,
     parser: *Parser,
 
     obj_function: *ObjFunction,
@@ -158,12 +161,9 @@ const CompileContext = struct {
     local_count: usize = 1,
     scope_depth: u8 = 0,
 
-    fn init(gc: *GarbageCollector, parser: *Parser, ty: FunctionType) !Self {
+    fn init(gc: *GarbageCollector, compiler: *Compiler, parser: *Parser, ty: FunctionType) !Self {
         var f = try gc.newFunction();
-        if (ty != .Script) {
-            f.name = try gc.copyString(parser.previous.str);
-        }
-        return Self{ .gc = gc, .parser = parser, .obj_function = f, .type = ty };
+        return Self{ .gc = gc, .compiler = compiler, .parser = parser, .obj_function = f, .type = ty };
     }
 
     fn currentChunk(self: *Self) *Chunk {
@@ -322,8 +322,12 @@ const CompileContext = struct {
     }
 
     fn function(self: *Self, ty: FunctionType) void {
-        var context = CompileContext.init(self.gc, self.parser, ty) catch |err| {
-            return self.errorAtPrevious("Could allocate for function", err);
+        var context = CompileContext.init(self.gc, self.compiler, self.parser, ty) catch |err| {
+            return self.errorAtPrevious("Could not allocate for function", err);
+        };
+        self.compiler.current = &context;
+        context.obj_function.name = self.gc.copyString(self.parser.previous.str) catch |err| {
+            return self.errorAtPrevious("Could not allocate for function name", err);
         };
         context.enclosing = self;
         context.beginScope();
@@ -354,6 +358,7 @@ const CompileContext = struct {
             self.emitByte(if (upvalue.is_local) 1 else 0);
             self.emitByte(upvalue.index);
         }
+        self.compiler.current = self;
     }
 
     fn declaration(self: *Self) void {

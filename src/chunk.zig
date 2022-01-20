@@ -2,6 +2,8 @@ const std = @import("std");
 const memory = @import("memory.zig");
 const value = @import("value.zig");
 
+const GarbageCollector = memory.GarbageCollector;
+
 const Allocator = std.mem.Allocator;
 
 // Declare an enum.
@@ -13,22 +15,22 @@ pub const Chunk = struct {
     code: []u8,
     lines: LineTracker,
     capacity: usize,
-    allocator: Allocator,
+    gc: *GarbageCollector,
 
-    pub fn init(allocator: Allocator) Chunk {
+    pub fn init(gc: *GarbageCollector) Chunk {
         return Chunk{
-            .constants = value.Array.init(allocator),
+            .constants = value.Array.init(gc),
             .code = &[_]u8{},
-            .lines = LineTracker.init(allocator),
+            .lines = LineTracker.init(gc.allocator),
             .capacity = 0,
-            .allocator = allocator,
+            .gc = gc,
         };
     }
 
     pub fn write(self: *Chunk, byte: u8, line: u32) !void {
         if (self.capacity < self.code.len + 1) {
             const new_capacity = memory.grow_capacity(self.capacity);
-            const new_memory = try self.allocator.reallocAtLeast(self.code.ptr[0..self.capacity], new_capacity);
+            const new_memory = try self.gc.allocator.reallocAtLeast(self.code.ptr[0..self.capacity], new_capacity);
             self.code.ptr = new_memory.ptr;
             self.capacity = new_memory.len;
         }
@@ -57,13 +59,15 @@ pub const Chunk = struct {
     }
 
     pub fn addConstant(self: *Chunk, v: value.Value) !usize {
+        self.gc.vm.push(v);
+        defer _ = self.gc.vm.pop();
         try self.constants.write(v);
         return self.constants.values.len - 1;
     }
 
     pub fn free(self: *Chunk) void {
         self.constants.free();
-        self.allocator.free(self.code.ptr[0..self.capacity]);
+        self.gc.allocator.free(self.code.ptr[0..self.capacity]);
         self.lines.free();
         self.code.len = 0;
         self.capacity = 0;

@@ -6,7 +6,9 @@ const Allocator = std.mem.Allocator;
 const Table = @import("table.zig").Table;
 const Chunk = @import("chunk.zig").Chunk;
 const Value = @import("value.zig").Value;
+const Array = @import("value.zig").Array;
 const VM = @import("vm.zig").VM;
+const Compiler = @import("compiler.zig").Compiler;
 
 const object = @import("object.zig");
 const Obj = object.Obj;
@@ -17,6 +19,8 @@ const ObjClosure = object.ObjClosure;
 const ObjUpvalue = object.ObjUpvalue;
 const ObjNative = object.ObjNative;
 const NativeFn = object.NativeFn;
+
+pub const GrayStack = std.ArrayList(*Obj);
 
 pub fn grow_capacity(capacity: usize) usize {
     if (capacity < 8) {
@@ -33,9 +37,11 @@ pub const GarbageCollector = struct {
     vm: *VM,
     strings: Table,
     objects: ?*Obj,
+    gray_stack: GrayStack,
 
     pub fn init(allocator: Allocator, vm: *VM) !*Self {
         var self = try allocator.create(Self);
+        self.gray_stack = GrayStack.init(allocator);
         self.allocator = Allocator.init(self, Self.allocFn, Self.resizeFn, Self.freeFn);
         self.vm = vm;
         self.inner_allocator = allocator;
@@ -47,6 +53,8 @@ pub const GarbageCollector = struct {
     pub fn free(self: *Self) void {
         self.strings.free();
         self.freeObjects();
+        self.gray_stack.deinit();
+        self.allocator.destroy(self.vm);
         self.inner_allocator.destroy(self);
     }
 
@@ -81,6 +89,7 @@ pub const GarbageCollector = struct {
         var o = try self.allocator.create(T);
         o.obj.type = ty;
         o.obj.next = self.objects;
+        o.obj.is_marked = false;
         self.objects = o.asObj();
         std.log.debug("{*} allocate {d} for {s}", .{ o, @sizeOf(T), @tagName(ty) });
         return o;
@@ -90,7 +99,7 @@ pub const GarbageCollector = struct {
         const function = try self.allocateObject(ObjFunction, .Function);
         function.arity = 0;
         function.upvalue_count = 0;
-        function.chunk = Chunk.init(self.allocator);
+        function.chunk = Chunk.init(self);
         function.name = null;
         return function;
     }
@@ -142,9 +151,8 @@ pub const GarbageCollector = struct {
     }
     fn allocateString(self: *Self, owned_chars: []u8, hash: u32) !*ObjString {
         const string = try self.allocateObject(ObjString, .String);
-        errdefer {
-            self.freeString(string);
-        }
+        self.vm.push(.{ .obj = string.asObj() });
+        defer _ = self.vm.pop();
         string.str = owned_chars;
         string.hash = hash;
         _ = try self.strings.set(string, .nil);
@@ -205,13 +213,117 @@ pub const GarbageCollector = struct {
     }
 
     pub fn collectGarbage(self: *Self) void {
+        @breakpoint();
         std.log.debug("-- gc begin", .{});
         self.markRoots();
+        self.traceReferences();
+        self.strings.removeWhite();
+        self.sweep();
         std.log.debug("-- gc end", .{});
     }
 
-    pub fn markRoots(self: *Self) void {
-        _ = self;
+    fn markRoots(self: *Self) void {
+        var slot: [*]Value = &self.vm.stack;
+        while (@ptrToInt(slot) < @ptrToInt(self.vm.stack_top)) : (slot += 1) {
+            self.markValue(slot[0]);
+        }
+        for (self.vm.frames[0..self.vm.frame_count]) |frame| {
+            self.markObj(frame.closure.asObj());
+        }
+        var upvalue = self.vm.open_upvalues;
+        while (upvalue) |u| {
+            self.markObj(u.asObj());
+            upvalue = u.next;
+        }
+        self.markTable(&self.vm.globals);
+        self.markCompilerRoots(&self.vm.compiler);
+    }
+
+    fn markCompilerRoots(self: *Self, compiler: *Compiler) void {
+        var context = compiler.current;
+        while (context) |c| {
+            self.markObj(c.obj_function.asObj());
+            context = c.enclosing;
+        }
+    }
+
+    fn markValue(self: *Self, value: Value) void {
+        return switch (value) {
+            .obj => |obj| self.markObj(obj),
+            else => {},
+        };
+    }
+
+    fn markObj(self: *Self, obj: *Obj) void {
+        if (obj.is_marked) return;
+        std.log.debug("{*} mark <{s}>", .{ obj, obj.toStr() });
+        obj.is_marked = true;
+        self.gray_stack.append(obj) catch {
+            std.debug.panic("Failed to allocate for gray stack", .{});
+        };
+    }
+
+    fn markTable(self: *Self, table: *Table) void {
+        for (table.entries) |entry| {
+            const key = entry.key orelse continue;
+            self.markObj(key.asObj());
+            self.markValue(entry.value);
+        }
+    }
+
+    fn markArray(self: *Self, array: *Array) void {
+        for (array.values) |v| {
+            self.markValue(v);
+        }
+    }
+
+    fn traceReferences(self: *Self) void {
+        while (self.gray_stack.popOrNull()) |o| {
+            self.blackenObject(o);
+        }
+    }
+
+    fn blackenObject(self: *Self, obj: *Obj) void {
+        std.log.debug("{*} blacken <{s}>", .{ obj, obj.toStr() });
+        switch (obj.type) {
+            .Upvalue => self.markValue(obj.asUpvalue().closed),
+            .Function => {
+                const function = obj.asFunction();
+                if (function.name) |name| {
+                    self.markObj(name.asObj());
+                }
+                self.markArray(&function.chunk.constants);
+            },
+            .Closure => {
+                const closure = obj.asClosure();
+                self.markObj(closure.function.asObj());
+                for (closure.upvalues) |maybe_upvalue| {
+                    const upvalue = maybe_upvalue orelse continue;
+                    self.markObj(upvalue.asObj());
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn sweep(self: *Self) void {
+        var previous: ?*Obj = null;
+        var next = self.objects;
+        while (next) |obj| {
+            if (obj.is_marked) {
+                obj.is_marked = false;
+                previous = obj;
+                next = obj.next;
+            } else {
+                next = obj.next;
+                if (previous) |p| {
+                    p.next = next;
+                } else {
+                    self.objects = next;
+                }
+                self.freeObject(obj);
+            }
+        }
     }
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {

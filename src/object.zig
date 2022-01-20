@@ -9,6 +9,7 @@ pub const Obj = struct {
     const Self = Obj;
     type: ObjType,
     next: ?*Self,
+    is_marked: bool,
 
     pub fn asString(self: *Self) *ObjString {
         std.debug.assert(self.type == .String);
@@ -37,6 +38,26 @@ pub const Obj = struct {
 
     pub fn asStringBytes(self: *Self) []u8 {
         return self.asString().str;
+    }
+
+    pub fn toStr(self: *Self) []const u8 {
+        switch (self.type) {
+            .String => {
+                return self.asStringBytes();
+            },
+            .Function => {
+                return self.asFunction().toStr();
+            },
+            .Closure => {
+                return self.asClosure().function.toStr();
+            },
+            .Native => {
+                return "native fn";
+            },
+            .Upvalue => {
+                return "upvalue";
+            },
+        }
     }
 
     pub fn print(self: *Self) void {
@@ -90,6 +111,13 @@ pub const ObjFunction = struct {
             std.debug.print("<fn {s}>", .{name.str});
         } else {
             std.debug.print("<script>", .{});
+        }
+    }
+    pub fn toStr(self: *Self) []const u8 {
+        if (self.name) |name| {
+            return name.str;
+        } else {
+            return "<script>";
         }
     }
 };

@@ -1,6 +1,6 @@
 const std = @import("std");
 const memory = @import("memory.zig");
-const Allocator = std.mem.Allocator;
+const GarbageCollector = memory.GarbageCollector;
 
 const object = @import("object.zig");
 const Obj = object.Obj;
@@ -114,20 +114,20 @@ pub const Entry = struct {
 pub const Array = struct {
     values: []Value,
     capacity: usize,
-    allocator: Allocator,
+    gc: *GarbageCollector,
 
-    pub fn init(allocator: Allocator) Array {
+    pub fn init(gc: *GarbageCollector) Array {
         return Array{
             .values = &[_]Value{},
             .capacity = 0,
-            .allocator = allocator,
+            .gc = gc,
         };
     }
 
     pub fn write(self: *Array, byte: Value) !void {
         if (self.capacity < self.values.len + 1) {
             const new_capacity = memory.grow_capacity(self.capacity);
-            const new_memory = try self.allocator.reallocAtLeast(self.values.ptr[0..self.capacity], new_capacity);
+            const new_memory = try self.gc.allocator.reallocAtLeast(self.values.ptr[0..self.capacity], new_capacity);
             self.values.ptr = new_memory.ptr;
             self.capacity = new_memory.len;
         }
@@ -137,7 +137,7 @@ pub const Array = struct {
     }
 
     pub fn free(self: *Array) void {
-        self.allocator.free(self.values.ptr[0..self.capacity]);
+        self.gc.allocator.free(self.values.ptr[0..self.capacity]);
         self.values.len = 0;
         self.capacity = 0;
     }
