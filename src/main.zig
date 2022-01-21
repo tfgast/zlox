@@ -3,16 +3,46 @@ const chunk = @import("chunk.zig");
 const debug = @import("debug.zig");
 const vm = @import("vm.zig");
 
+pub const log_level = std.log.Level.debug;
+pub var runtime_log_level = std.log.default_level;
+
+pub const DEBUG_STRESS_GC = true;
+
 const InterpretError = vm.InterpretError;
 
 const Allocator = std.mem.Allocator;
 
 const GPA = std.heap.GeneralPurposeAllocator(.{});
 
+pub fn log(
+    comptime level: std.log.Level,
+    comptime scope: @TypeOf(.EnumLiteral),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    _ = scope;
+    if (@enumToInt(level) > @enumToInt(runtime_log_level)) {
+        return;
+    }
+
+    const prefix = "[" ++ level.asText() ++ "] ";
+
+    // Print the message to stderr, silently ignoring any errors
+    std.debug.getStderrMutex().lock();
+    defer std.debug.getStderrMutex().unlock();
+    const stderr = std.io.getStdErr().writer();
+    nosuspend stderr.print(prefix ++ format ++ "\n", args) catch return;
+}
+
 pub fn main() anyerror!void {
     // const allocator = std.heap.page_allocator;
     var gpa = GPA{};
     const allocator = gpa.allocator();
+
+    if (std.os.getenv("ZLOX_DEBUG")) |value| {
+        _ = value;
+        runtime_log_level = .debug;
+    }
 
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);

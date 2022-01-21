@@ -1,5 +1,5 @@
 const std = @import("std");
-const builtin = @import("builtin");
+const root = @import("root");
 const File = std.fs.File;
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
@@ -23,6 +23,8 @@ const Allocator = std.mem.Allocator;
 
 pub const RuntimeError = error{Runtime};
 pub const InterpretError = RuntimeError || CompileError || std.os.WriteError;
+
+const DEBUG_TRACE_EXECUTION = @hasDecl(root, "DEBUG_TRACE_EXECUTION ") and root.DEBUG_TRACE_EXECUTION;
 const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * 256;
 
@@ -74,7 +76,7 @@ pub const VM = struct {
     }
 
     pub fn interpret(self: *Self, source: []u8) InterpretError!void {
-        if (builtin.mode == std.builtin.Mode.Debug) {
+        if (DEBUG_TRACE_EXECUTION) {
             std.debug.print("== Compiling ==\n", .{});
         }
         const function = try self.compiler.compile(source);
@@ -83,7 +85,7 @@ pub const VM = struct {
         _ = self.pop();
         self.push(closure.val());
         _ = self.call(closure, 0);
-        if (builtin.mode == std.builtin.Mode.Debug) {
+        if (DEBUG_TRACE_EXECUTION) {
             std.debug.print("== Running ==\n", .{});
         }
         try self.run();
@@ -166,7 +168,7 @@ pub const VM = struct {
         var base_frame: [*]CallFrame = &self.frames;
         self.frame = base_frame + (self.frame_count - 1);
         while (true) {
-            if (builtin.mode == std.builtin.Mode.Debug) {
+            if (DEBUG_TRACE_EXECUTION) {
                 std.debug.print("          ", .{});
                 const n = (@ptrToInt(self.stack_top) - @ptrToInt(&self.stack)) / @sizeOf(Value);
                 var slice = self.stack[0..n];

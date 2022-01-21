@@ -1,4 +1,5 @@
 const std = @import("std");
+const root = @import("root");
 
 const GarbageCollector = @import("memory.zig").GarbageCollector;
 
@@ -16,6 +17,8 @@ const object = @import("object.zig");
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
 
+const DEBUG_PRINT_CODE = @hasDecl(root, "DEBUG_PRINT_CODE ") and root.DEBUG_PRINT_CODE;
+
 pub const CompileError = error{ Compile, OutOfMemory, ICE, InvalidCharacter };
 
 const Parser = struct {
@@ -23,6 +26,7 @@ const Parser = struct {
     previous: Token = Token{},
     hadError: ?CompileError = null,
     panicMode: bool = false,
+    abortMode: bool = false,
     scanner: Scanner,
 };
 
@@ -278,10 +282,18 @@ const CompileContext = struct {
     }
 
     fn beginScope(self: *Self) void {
+        if (self.scope_depth == 255) {
+            self.errorAtPrevious("Too many nested scopes", CompileError.Compile);
+            self.parser.abortMode = true;
+            return;
+        }
         self.scope_depth += 1;
     }
 
     fn endScope(self: *Self) void {
+        if (self.scope_depth == 0) {
+            return;
+        }
         self.scope_depth -= 1;
         while (self.local_count > 0 and self.locals[self.local_count - 1].depth.? > self.scope_depth) {
             if (self.locals[self.local_count - 1].is_captured) {
@@ -296,7 +308,7 @@ const CompileContext = struct {
     fn endCompiler(self: *Self) *ObjFunction {
         self.emitReturn();
         const f = self.obj_function;
-        if (std.log.level == .debug) {
+        if (DEBUG_PRINT_CODE) {
             if (self.parser.hadError == null) {
                 const name = if (f.name) |n| n.str else "script";
                 @import("debug.zig").disassembleChunk(self.currentChunk(), name);
@@ -314,7 +326,7 @@ const CompileContext = struct {
     }
 
     fn errorAt(self: *Self, token: *Token, message: []const u8, err: CompileError) void {
-        if (self.parser.panicMode) return;
+        if (self.parser.abortMode or self.parser.panicMode) return;
         self.parser.panicMode = true;
         self.parser.hadError = err;
         const print = std.debug.print;

@@ -1,6 +1,8 @@
 const std = @import("std");
-const builtin = @import("builtin");
+const root = @import("root");
 const assert = std.debug.assert;
+
+const DEBUG_STRESS_GC = @hasDecl(root, "DEBUG_STRESS_GC ") and root.DEBUG_STRESS_GC;
 
 const Allocator = std.mem.Allocator;
 const Table = @import("table.zig").Table;
@@ -240,14 +242,14 @@ pub const GarbageCollector = struct {
 
     pub fn collectGarbage(self: *Self) void {
         const before = self.bytes_allocated;
-        std.log.debug("-- gc begin", .{});
+        std.log.info("-- gc begin", .{});
         self.markRoots();
         self.traceReferences();
         self.strings.removeWhite();
         self.sweep();
-        std.log.debug("-- gc end", .{});
+        std.log.info("-- gc end", .{});
         self.next_gc = self.bytes_allocated * 2;
-        std.log.debug("   collected {d} bytes (from {d} to {d}) next at {d}", .{ before - self.bytes_allocated, before, self.bytes_allocated, self.next_gc });
+        std.log.info("   collected {d} bytes (from {d} to {d}) next at {d}", .{ before - self.bytes_allocated, before, self.bytes_allocated, self.next_gc });
         // @breakpoint();
     }
 
@@ -376,8 +378,7 @@ pub const GarbageCollector = struct {
 
     fn allocFn(self: *Self, len: usize, ptr_align: u29, len_align: u29, ret_addr: usize) Allocator.Error![]u8 {
         self.bytes_allocated += len;
-        // if (builtin.mode == std.builtin.Mode.Debug) {
-        if (false) {
+        if (DEBUG_STRESS_GC) {
             self.collectGarbage();
         } else if (self.bytes_allocated > self.next_gc) {
             self.collectGarbage();
@@ -386,8 +387,7 @@ pub const GarbageCollector = struct {
     }
     fn resizeFn(self: *Self, buf: []u8, buf_align: u29, new_len: usize, len_align: u29, ret_addr: usize) ?usize {
         self.bytes_allocated += new_len - buf.len;
-        // if (builtin.mode == std.builtin.Mode.Debug) {
-        if (false) {
+        if (DEBUG_STRESS_GC) {
             if (new_len > buf.len) {
                 self.collectGarbage();
             }

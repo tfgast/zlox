@@ -26,7 +26,7 @@ pub const Obj = struct {
     is_marked: bool,
 
     pub fn as(self: *Self, comptime ty: ObjType) ?*ToType(ty) {
-        return if (self.type == ty) @ptrCast(*ToType(ty), self) else null;
+        return if (self.type == ty) @fieldParentPtr(ToType(ty), "obj", self) else null;
     }
 
     pub fn asStringBytes(self: *Self) []u8 {
