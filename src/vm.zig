@@ -364,10 +364,10 @@ pub const VM = struct {
                 .Add => {
                     if (self.peek(0).as(.String) != null and self.peek(1).as(.String) != null) {
                         try self.concatenate();
-                    } else if ((self.peek(0) == .number) and (self.peek(1) == .number)) {
+                    } else if ((self.peek(0).isNumber()) and (self.peek(1).isNumber())) {
                         const rhs = self.pop();
                         const lhs = self.pop();
-                        self.push(add(lhs.number, rhs.number));
+                        self.push(add(lhs.asNumber().?, rhs.asNumber().?));
                     } else {
                         self.runtimeError("Operands must be two numbers or two strings.", .{});
                         return InterpretError.Runtime;
@@ -386,11 +386,11 @@ pub const VM = struct {
                     self.push(Value.boolean(self.pop().isFalsey()));
                 },
                 .Negate => {
-                    if (self.peek(0) != .number) {
+                    if (!self.peek(0).isNumber()) {
                         self.runtimeError("Operand must be a number.", .{});
                         return InterpretError.Runtime;
                     }
-                    self.push(Value.number(-self.pop().number));
+                    self.push(Value.number(-self.pop().asNumber().?));
                 },
                 .Class => {
                     const class = self.gc.newClass(self.read_string()) catch {
@@ -426,13 +426,13 @@ pub const VM = struct {
     }
 
     fn binaryOp(self: *Self, comptime op: anytype) InterpretError!void {
-        if ((self.peek(0) != .number) or (self.peek(1) != .number)) {
+        if (!self.peek(0).isNumber() or !self.peek(1).isNumber()) {
             self.runtimeError("Operands must be numbers.", .{});
             return InterpretError.Runtime;
         }
         const rhs = self.pop();
         const lhs = self.pop();
-        self.push(op(lhs.number, rhs.number));
+        self.push(op(lhs.asNumber().?, rhs.asNumber().?));
     }
 
     fn concatenate(self: *Self) InterpretError!void {
@@ -455,44 +455,41 @@ pub const VM = struct {
     }
 
     fn callValue(self: *Self, callee: Value, arg_count: u8) bool {
-        switch (callee) {
-            .obj => |obj| {
-                switch (obj.type) {
-                    .Closure => return self.call(obj.as(.Closure).?, arg_count),
-                    .BoundMethod => {
-                        const bound = obj.as(.BoundMethod).?;
-                        (self.stack_top - arg_count - 1)[0] = bound.receiver;
-                        return self.call(bound.method, arg_count);
-                    },
-                    .Class => {
-                        const class = obj.as(.Class).?;
-                        const instance = self.gc.newInstance(class) catch {
-                            self.runtimeError("Memory allocation failed.", .{});
-                            return false;
-                        };
-                        (self.stack_top - arg_count - 1)[0] = instance.val();
-                        if (class.methods.get(self.init_string.?)) |initializer| {
-                            return self.call(initializer.as(.Closure).?, arg_count);
-                        } else if (arg_count != 0) {
-                            self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
-                            return false;
-                        }
-                        return true;
-                    },
-                    .Native => {
-                        const native = obj.as(.Native).?;
-                        const result = native.function((self.stack_top - arg_count)[0..arg_count]) catch {
-                            self.runtimeError("Native function returned an error.", .{});
-                            return false;
-                        };
-                        self.stack_top -= arg_count + 1;
-                        self.push(result);
-                        return true;
-                    },
-                    else => {},
-                }
-            },
-            else => {},
+        if (callee.asObj()) |obj| {
+            switch (obj.type) {
+                .Closure => return self.call(obj.as(.Closure).?, arg_count),
+                .BoundMethod => {
+                    const bound = obj.as(.BoundMethod).?;
+                    (self.stack_top - arg_count - 1)[0] = bound.receiver;
+                    return self.call(bound.method, arg_count);
+                },
+                .Class => {
+                    const class = obj.as(.Class).?;
+                    const instance = self.gc.newInstance(class) catch {
+                        self.runtimeError("Memory allocation failed.", .{});
+                        return false;
+                    };
+                    (self.stack_top - arg_count - 1)[0] = instance.val();
+                    if (class.methods.get(self.init_string.?)) |initializer| {
+                        return self.call(initializer.as(.Closure).?, arg_count);
+                    } else if (arg_count != 0) {
+                        self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
+                        return false;
+                    }
+                    return true;
+                },
+                .Native => {
+                    const native = obj.as(.Native).?;
+                    const result = native.function((self.stack_top - arg_count)[0..arg_count]) catch {
+                        self.runtimeError("Native function returned an error.", .{});
+                        return false;
+                    };
+                    self.stack_top -= arg_count + 1;
+                    self.push(result);
+                    return true;
+                },
+                else => {},
+            }
         }
         self.runtimeError("Can only call functions and classes.", .{});
         return false;
