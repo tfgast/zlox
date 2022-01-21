@@ -3,6 +3,8 @@ const chunk = @import("chunk.zig");
 const debug = @import("debug.zig");
 const vm = @import("vm.zig");
 
+const InterpretError = vm.InterpretError;
+
 const Allocator = std.mem.Allocator;
 
 const GPA = std.heap.GeneralPurposeAllocator(.{});
@@ -27,7 +29,7 @@ pub fn main() anyerror!void {
 pub fn repl(allocator: Allocator) !void {
     const stdin = std.io.getStdIn().reader();
     const stdout = std.io.getStdOut();
-    var v = try vm.VM.init(allocator);
+    var v = try vm.VM.init(allocator, stdout);
     defer v.free();
     var buf: [1024]u8 = undefined;
     while (true) {
@@ -44,7 +46,8 @@ pub fn repl(allocator: Allocator) !void {
 }
 
 pub fn runFile(allocator: Allocator, path: []u8) !void {
-    var v = try vm.VM.init(allocator);
+    const stdout = std.io.getStdOut();
+    var v = try vm.VM.init(allocator, stdout);
     defer v.free();
     const file = try std.fs.cwd().openFile(path, .{ .read = true });
     defer file.close();
@@ -55,5 +58,11 @@ pub fn runFile(allocator: Allocator, path: []u8) !void {
     );
     defer allocator.free(contents);
 
-    try v.interpret(contents);
+    v.interpret(contents) catch |err| {
+        if (err == InterpretError.Compile) {
+            std.process.exit(65);
+        } else if (err == InterpretError.Runtime) {
+            std.process.exit(70);
+        }
+    };
 }

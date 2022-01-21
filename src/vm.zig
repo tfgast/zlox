@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const File = std.fs.File;
 const Chunk = @import("chunk.zig").Chunk;
 const OpCode = @import("chunk.zig").OpCode;
 const value = @import("value.zig");
@@ -44,10 +45,12 @@ pub const VM = struct {
     frame: [*]CallFrame,
     frame_count: usize,
     init_string: ?*ObjString,
+    output: File,
 
-    pub fn init(allocator: Allocator) !*Self {
+    pub fn init(allocator: Allocator, output: File) !*Self {
         var vm = try allocator.create(Self);
         const gc = try GarbageCollector.init(allocator, vm);
+        vm.output = output;
         vm.gc = gc;
         vm.compiler = Compiler.init(gc);
         vm.globals = Table.init(gc);
@@ -176,7 +179,10 @@ pub const VM = struct {
             const instruction = self.read_byte();
             switch (@intToEnum(OpCode, instruction)) {
                 .Print => {
-                    std.debug.print("{s}\n", .{self.pop()});
+                    self.output.writer().print("{s}\n", .{self.pop()}) catch {
+                        self.runtimeError("Could not write to output.", .{});
+                        return RuntimeError.Runtime;
+                    };
                 },
                 .Jump => {
                     const offset = self.read_short();
@@ -227,7 +233,7 @@ pub const VM = struct {
                 .Closure => {
                     const function = self.read_constant().asFunction();
                     const closure = self.gc.newClosure(function) catch {
-                        self.runtimeError("Out of Memory", .{});
+                        self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
                     self.push(.{ .obj = closure.asObj() });
@@ -278,14 +284,14 @@ pub const VM = struct {
                     if (self.globals.get(name)) |v| {
                         self.push(v.*);
                     } else {
-                        self.runtimeError("Undefined variable '{s}'", .{name.str});
+                        self.runtimeError("Undefined variable '{s}'.", .{name.str});
                         return InterpretError.Runtime;
                     }
                 },
                 .DefineGlobal => {
                     const name = self.read_string();
                     _ = self.globals.set(name, self.peek(0)) catch {
-                        self.runtimeError("Out of Memory", .{});
+                        self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
                     _ = self.pop();
@@ -293,12 +299,12 @@ pub const VM = struct {
                 .SetGlobal => {
                     const name = self.read_string();
                     const was_new = self.globals.set(name, self.peek(0)) catch {
-                        self.runtimeError("Out of Memory", .{});
+                        self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
                     if (was_new) {
                         _ = self.globals.delete(name);
-                        self.runtimeError("Undefined variable '{s}'", .{name});
+                        self.runtimeError("Undefined variable '{s}'.", .{name});
                         return InterpretError.Runtime;
                     }
                 },
@@ -312,7 +318,7 @@ pub const VM = struct {
                 },
                 .GetProperty => {
                     if (!self.peek(0).isInstance()) {
-                        self.runtimeError("Only instances have properties", .{});
+                        self.runtimeError("Only instances have properties.", .{});
                         return InterpretError.Runtime;
                     }
                     const instance = self.peek(0).asInstance();
@@ -326,13 +332,13 @@ pub const VM = struct {
                 },
                 .SetProperty => {
                     if (!self.peek(1).isInstance()) {
-                        self.runtimeError("Only instances have properties", .{});
+                        self.runtimeError("Only instances have fields.", .{});
                         return InterpretError.Runtime;
                     }
                     const instance = self.peek(1).asInstance();
                     const name = self.read_string();
                     _ = instance.fields.set(name, self.peek(0)) catch {
-                        self.runtimeError("Out of Memory", .{});
+                        self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
                     var v = self.pop();
@@ -365,7 +371,7 @@ pub const VM = struct {
                         const lhs = self.pop();
                         self.push(add(lhs.number, rhs.number));
                     } else {
-                        self.runtimeError("Operands must be numbers.", .{});
+                        self.runtimeError("Operands must be two numbers or two strings.", .{});
                         return InterpretError.Runtime;
                     }
                 },
@@ -390,7 +396,7 @@ pub const VM = struct {
                 },
                 .Class => {
                     const class = self.gc.newClass(self.read_string()) catch {
-                        self.runtimeError("Out of Memory", .{});
+                        self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
                     self.push(.{ .obj = class.asObj() });
@@ -404,14 +410,14 @@ pub const VM = struct {
                     const subclass = self.peek(0).asClass();
 
                     superclass.asClass().methods.addAll(&subclass.methods) catch {
-                        self.runtimeError("Out of Memory", .{});
+                        self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
                     _ = self.pop();
                 },
                 .Method => {
                     self.defineMethod(self.read_string()) catch {
-                        self.runtimeError("Out of Memory", .{});
+                        self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
                 },
@@ -513,7 +519,7 @@ pub const VM = struct {
 
     fn invokeFromClass(self: *Self, class: *ObjClass, name: *ObjString, arg_count: u8) bool {
         const method = class.methods.get(name) orelse {
-            self.runtimeError("Undefined property '{s}'", .{name});
+            self.runtimeError("Undefined property '{s}'.", .{name});
             return false;
         };
         return self.call(method.asClosure(), arg_count);
@@ -579,11 +585,11 @@ pub const VM = struct {
 
     fn bindMethod(self: *Self, class: *ObjClass, name: *ObjString) bool {
         const method = class.methods.get(name) orelse {
-            self.runtimeError("Undefined property '{s}'", .{name});
+            self.runtimeError("Undefined property '{s}'.", .{name});
             return false;
         };
         const bound = self.gc.newBoundMethod(self.peek(0), method.asClosure()) catch {
-            self.runtimeError("Out of Memory", .{});
+            self.runtimeError("Out of Memory.", .{});
             return false;
         };
         _ = self.pop();

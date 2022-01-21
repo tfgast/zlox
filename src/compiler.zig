@@ -298,7 +298,7 @@ const CompileContext = struct {
         const f = self.obj_function;
         if (std.log.level == .debug) {
             if (self.parser.hadError == null) {
-                const name = if (f.name) |n| n.str else "<script>";
+                const name = if (f.name) |n| n.str else "script";
                 @import("debug.zig").disassembleChunk(self.currentChunk(), name);
             }
         }
@@ -318,13 +318,13 @@ const CompileContext = struct {
         self.parser.panicMode = true;
         self.parser.hadError = err;
         const print = std.debug.print;
-        print("[line {d}] Error ", .{token.line});
+        print("[line {d}] Error", .{token.line});
         if (token.type == .EOF) {
-            print("at end", .{});
+            print(" at end", .{});
         } else if (token.type != .Error) {
-            print("at '{s}'", .{token.str});
+            print(" at '{s}'", .{token.str});
         }
-        print(": {s}'\n", .{message});
+        print(": {s}\n", .{message});
     }
 
     fn expression(self: *Self) void {
@@ -353,9 +353,10 @@ const CompileContext = struct {
         context.consume(.LeftParen, "Expect '(' after function name.");
         if (!context.check(.RightParen)) {
             while (true) {
-                context.obj_function.arity += 1;
-                if (context.obj_function.arity > 255) {
+                if (context.obj_function.arity == 255) {
                     self.errorAtCurrent("Can't have more than 255 parameters.", CompileError.Compile);
+                } else {
+                    context.obj_function.arity += 1;
                 }
                 const constant = context.parseVariable("Expect parameter name");
                 context.defineVariable(constant);
@@ -527,7 +528,7 @@ const CompileContext = struct {
 
     fn expressionStatement(self: *Self) void {
         self.expression();
-        self.consume(.Semicolon, "Expect ';' after value.");
+        self.consume(.Semicolon, "Expect ';' after expression.");
         self.emitOpCode(.Pop);
     }
 
@@ -666,7 +667,7 @@ const CompileContext = struct {
         _ = can_assign;
         if (self.compiler.current_class == null) {
             self.errorAtPrevious("Can't use 'super' outside of a class.", CompileError.Compile);
-        } else if (self.compiler.current_class.?.has_superclass) {
+        } else if (!self.compiler.current_class.?.has_superclass) {
             self.errorAtPrevious("Can't use 'super' in a class with no superclass.", CompileError.Compile);
         }
         self.consume(.Dot, "Expect '.' after 'super'.");
@@ -682,7 +683,7 @@ const CompileContext = struct {
     fn this(self: *Self, can_assign: bool) void {
         _ = can_assign;
         if (self.compiler.current_class == null) {
-            self.errorAtPrevious("Can't use 'this' outside of class.", CompileError.Compile);
+            self.errorAtPrevious("Can't use 'this' outside of a class.", CompileError.Compile);
         }
         self.variable(false);
     }
@@ -811,13 +812,17 @@ const CompileContext = struct {
     }
 
     fn resolveLocal(self: *Self, name: *const Token) ?u8 {
+        if (self.local_count >= 255) {
+            self.parser.panicMode = true;
+            return null;
+        }
         var i = @intCast(u8, self.local_count);
         while (i > 0) {
             i -= 1;
             const local = &self.locals[i];
             if (std.mem.eql(u8, name.str, local.name.str)) {
                 if (local.depth == null) {
-                    self.errorAtPrevious("Can't read local variable in its own initializer", CompileError.Compile);
+                    self.errorAtPrevious("Can't read local variable in its own initializer.", CompileError.Compile);
                 }
                 return i;
             }
@@ -908,7 +913,8 @@ const CompileContext = struct {
             while (true) {
                 self.expression();
                 if (arg_count == 255) {
-                    self.errorAtPrevious("Can't have more than 255 arguments", CompileError.Compile);
+                    self.errorAtPrevious("Can't have more than 255 arguments.", CompileError.Compile);
+                    break;
                 }
                 arg_count += 1;
                 if (!self.match(.Comma)) {

@@ -188,7 +188,7 @@ pub const Scanner = struct {
             _ = self.advance();
         }
         if (self.isAtEnd()) {
-            return self.errorToken("Unterminated string");
+            return self.errorToken("Unterminated string.");
         }
         // The closing quote
         _ = self.advance();
