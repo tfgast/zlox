@@ -78,10 +78,10 @@ pub const VM = struct {
             std.debug.print("== Compiling ==\n", .{});
         }
         const function = try self.compiler.compile(source);
-        self.push(.{ .obj = function.asObj() });
+        self.push(function.val());
         const closure = try self.gc.newClosure(function);
         _ = self.pop();
-        self.push(.{ .obj = closure.asObj() });
+        self.push(closure.val());
         _ = self.call(closure, 0);
         if (builtin.mode == std.builtin.Mode.Debug) {
             std.debug.print("== Running ==\n", .{});
@@ -111,10 +111,10 @@ pub const VM = struct {
 
     fn defineNative(self: *Self, name: []const u8, function: NativeFn) InterpretError!void {
         const string = try self.gc.copyString(name);
-        self.push(.{ .obj = string.asObj() });
+        self.push(string.val());
         const native = try self.gc.newNative(function);
-        self.push(.{ .obj = native.asObj() });
-        _ = try self.globals.set(self.peek(1).asString(), self.peek(0));
+        self.push(native.val());
+        _ = try self.globals.set(self.peek(1).as(.String).?, self.peek(0));
         _ = self.pop();
         _ = self.pop();
     }
@@ -152,7 +152,7 @@ pub const VM = struct {
     }
 
     fn read_string(self: *Self) *ObjString {
-        return self.read_constant().asString();
+        return self.read_constant().as(.String).?;
     }
 
     fn read_constant_long(self: *Self) Value {
@@ -231,12 +231,12 @@ pub const VM = struct {
                     self.frame = base_frame + self.frame_count - 1;
                 },
                 .Closure => {
-                    const function = self.read_constant().asFunction();
+                    const function = self.read_constant().as(.Function).?;
                     const closure = self.gc.newClosure(function) catch {
                         self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
-                    self.push(.{ .obj = closure.asObj() });
+                    self.push(closure.val());
                     for (closure.upvalues) |*upvalue| {
                         const is_local = self.read_byte();
                         const index = self.read_byte();
@@ -260,13 +260,13 @@ pub const VM = struct {
                     self.push(constant);
                 },
                 .Nil => {
-                    self.push(.nil);
+                    self.push(Value.nil());
                 },
                 .True => {
-                    self.push(.{ .boolean = true });
+                    self.push(Value.boolean(true));
                 },
                 .False => {
-                    self.push(.{ .boolean = false });
+                    self.push(Value.boolean(false));
                 },
                 .Pop => {
                     _ = self.pop();
@@ -317,11 +317,10 @@ pub const VM = struct {
                     self.frame[0].closure.upvalues[slot].?.location.* = self.peek(0);
                 },
                 .GetProperty => {
-                    if (!self.peek(0).isInstance()) {
+                    const instance = self.peek(0).as(.Instance) orelse {
                         self.runtimeError("Only instances have properties.", .{});
                         return InterpretError.Runtime;
-                    }
-                    const instance = self.peek(0).asInstance();
+                    };
                     const name = self.read_string();
                     if (instance.fields.get(name)) |v| {
                         _ = self.pop(); //Instance
@@ -331,11 +330,10 @@ pub const VM = struct {
                     }
                 },
                 .SetProperty => {
-                    if (!self.peek(1).isInstance()) {
+                    const instance = self.peek(1).as(.Instance) orelse {
                         self.runtimeError("Only instances have fields.", .{});
                         return InterpretError.Runtime;
-                    }
-                    const instance = self.peek(1).asInstance();
+                    };
                     const name = self.read_string();
                     _ = instance.fields.set(name, self.peek(0)) catch {
                         self.runtimeError("Out of Memory.", .{});
@@ -346,7 +344,7 @@ pub const VM = struct {
                     self.push(v);
                 },
                 .GetSuper => {
-                    const superclass = self.pop().asClass();
+                    const superclass = self.pop().as(.Class).?;
                     const name = self.read_string();
                     if (!self.bindMethod(superclass, name)) {
                         return InterpretError.Runtime;
@@ -355,7 +353,7 @@ pub const VM = struct {
                 .Equal => {
                     const b = self.pop();
                     const a = self.pop();
-                    self.push(.{ .boolean = a.equal(b) });
+                    self.push(Value.boolean(a.equal(b)));
                 },
                 .Greater => {
                     try self.binaryOp(greater);
@@ -364,7 +362,7 @@ pub const VM = struct {
                     try self.binaryOp(less);
                 },
                 .Add => {
-                    if (self.peek(0).isString() and self.peek(1).isString()) {
+                    if (self.peek(0).as(.String) != null and self.peek(1).as(.String) != null) {
                         try self.concatenate();
                     } else if ((self.peek(0) == .number) and (self.peek(1) == .number)) {
                         const rhs = self.pop();
@@ -385,31 +383,30 @@ pub const VM = struct {
                     try self.binaryOp(div);
                 },
                 .Not => {
-                    self.push(.{ .boolean = self.pop().isFalsey() });
+                    self.push(Value.boolean(self.pop().isFalsey()));
                 },
                 .Negate => {
                     if (self.peek(0) != .number) {
                         self.runtimeError("Operand must be a number.", .{});
                         return InterpretError.Runtime;
                     }
-                    self.push(.{ .number = -self.pop().number });
+                    self.push(Value.number(-self.pop().number));
                 },
                 .Class => {
                     const class = self.gc.newClass(self.read_string()) catch {
                         self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
-                    self.push(.{ .obj = class.asObj() });
+                    self.push(class.val());
                 },
                 .Inherit => {
-                    const superclass = self.peek(1);
-                    if (!superclass.isClass()) {
+                    const superclass = self.peek(1).as(.Class) orelse {
                         self.runtimeError("Superclass must be a class.", .{});
                         return InterpretError.Runtime;
-                    }
-                    const subclass = self.peek(0).asClass();
+                    };
+                    const subclass = self.peek(0).as(.Class).?;
 
-                    superclass.asClass().methods.addAll(&subclass.methods) catch {
+                    superclass.methods.addAll(&subclass.methods) catch {
                         self.runtimeError("Out of Memory.", .{});
                         return InterpretError.Runtime;
                     };
@@ -439,8 +436,8 @@ pub const VM = struct {
     }
 
     fn concatenate(self: *Self) InterpretError!void {
-        const b = self.peek(0).asString();
-        const a = self.peek(1).asString();
+        const b = self.peek(0).as(.String).?;
+        const a = self.peek(1).as(.String).?;
         const chars = std.mem.concat(self.gc.allocator, u8, &[_][]const u8{ a.str, b.str }) catch {
             self.runtimeError("Memory allocation failed.", .{});
             return InterpretError.Runtime;
@@ -454,28 +451,28 @@ pub const VM = struct {
         };
         _ = self.pop();
         _ = self.pop();
-        self.push(.{ .obj = result.asObj() });
+        self.push(result.val());
     }
 
     fn callValue(self: *Self, callee: Value, arg_count: u8) bool {
         switch (callee) {
             .obj => |obj| {
                 switch (obj.type) {
-                    .Closure => return self.call(obj.asClosure(), arg_count),
+                    .Closure => return self.call(obj.as(.Closure).?, arg_count),
                     .BoundMethod => {
-                        const bound = obj.asBoundMethod();
+                        const bound = obj.as(.BoundMethod).?;
                         (self.stack_top - arg_count - 1)[0] = bound.receiver;
                         return self.call(bound.method, arg_count);
                     },
                     .Class => {
-                        const class = obj.asClass();
+                        const class = obj.as(.Class).?;
                         const instance = self.gc.newInstance(class) catch {
                             self.runtimeError("Memory allocation failed.", .{});
                             return false;
                         };
-                        (self.stack_top - arg_count - 1)[0] = .{ .obj = instance.asObj() };
+                        (self.stack_top - arg_count - 1)[0] = instance.val();
                         if (class.methods.get(self.init_string.?)) |initializer| {
-                            return self.call(initializer.asClosure(), arg_count);
+                            return self.call(initializer.as(.Closure).?, arg_count);
                         } else if (arg_count != 0) {
                             self.runtimeError("Expected 0 arguments but got {d}.", .{arg_count});
                             return false;
@@ -483,7 +480,7 @@ pub const VM = struct {
                         return true;
                     },
                     .Native => {
-                        const native = obj.asNative();
+                        const native = obj.as(.Native).?;
                         const result = native.function((self.stack_top - arg_count)[0..arg_count]) catch {
                             self.runtimeError("Native function returned an error.", .{});
                             return false;
@@ -503,11 +500,10 @@ pub const VM = struct {
 
     fn invoke(self: *Self, name: *ObjString, arg_count: u8) bool {
         const receiver = self.peek(arg_count);
-        if (!receiver.isInstance()) {
+        const instance = receiver.as(.Instance) orelse {
             self.runtimeError("Only instances have methods.", .{});
             return false;
-        }
-        const instance = receiver.asInstance();
+        };
 
         if (instance.fields.get(name)) |v| {
             (self.stack_top - arg_count - 1)[0] = v.*;
@@ -522,7 +518,7 @@ pub const VM = struct {
             self.runtimeError("Undefined property '{s}'.", .{name});
             return false;
         };
-        return self.call(method.asClosure(), arg_count);
+        return self.call(method.as(.Closure).?, arg_count);
     }
 
     fn call(self: *Self, closure: *ObjClosure, arg_count: u8) bool {
@@ -578,7 +574,7 @@ pub const VM = struct {
 
     fn defineMethod(self: *Self, name: *ObjString) !void {
         const method = self.peek(0);
-        var class = self.peek(1).asClass();
+        var class = self.peek(1).as(.Class).?;
         _ = try class.methods.set(name, method);
         _ = self.pop();
     }
@@ -588,38 +584,38 @@ pub const VM = struct {
             self.runtimeError("Undefined property '{s}'.", .{name});
             return false;
         };
-        const bound = self.gc.newBoundMethod(self.peek(0), method.asClosure()) catch {
+        const bound = self.gc.newBoundMethod(self.peek(0), method.as(.Closure).?) catch {
             self.runtimeError("Out of Memory.", .{});
             return false;
         };
         _ = self.pop();
-        self.push(.{ .obj = bound.asObj() });
+        self.push(bound.val());
         return true;
     }
 };
 
 fn greater(x: f64, y: f64) Value {
-    return .{ .boolean = (x > y) };
+    return Value.boolean((x > y));
 }
 
 fn less(x: f64, y: f64) Value {
-    return .{ .boolean = (x < y) };
+    return Value.boolean((x < y));
 }
 
 fn add(x: f64, y: f64) Value {
-    return .{ .number = x + y };
+    return Value.number(x + y);
 }
 
 fn sub(x: f64, y: f64) Value {
-    return .{ .number = x - y };
+    return Value.number(x - y);
 }
 
 fn mul(x: f64, y: f64) Value {
-    return .{ .number = x * y };
+    return Value.number(x * y);
 }
 
 fn div(x: f64, y: f64) Value {
-    return .{ .number = x / y };
+    return Value.number(x / y);
 }
 
 const ExecutionContext = struct {
@@ -634,11 +630,11 @@ fn clockNative(values: []Value) RuntimeError!Value {
         var timer: ?std.time.Timer = null;
     };
     if (T.timer) |timer| {
-        return Value{ .number = @intToFloat(f64, timer.read()) * 1.0e-9 };
+        return Value.number(@intToFloat(f64, timer.read()) * 1.0e-9);
     } else {
         T.timer = std.time.Timer.start() catch {
             return RuntimeError.Runtime;
         };
-        return Value{ .number = 0.0 };
+        return Value.number(0.0);
     }
 }

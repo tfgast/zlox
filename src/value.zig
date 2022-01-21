@@ -4,6 +4,7 @@ const GarbageCollector = memory.GarbageCollector;
 
 const object = @import("object.zig");
 const Obj = object.Obj;
+const ToType = object.ToType;
 const ObjType = object.ObjType;
 const ObjString = object.ObjString;
 const ObjClosure = object.ObjClosure;
@@ -21,6 +22,33 @@ pub const Value = union(ValueType) {
     nil: void,
     number: f64,
     obj: *Obj,
+
+    pub fn boolean(b: bool) Value {
+        return .{ .boolean = b };
+    }
+
+    pub fn number(n: f64) Value {
+        return .{ .number = n };
+    }
+
+    pub fn obj(o: *Obj) Value {
+        return .{ .obj = o };
+    }
+
+    pub fn nil() Value {
+        return .nil;
+    }
+
+    pub fn isNil(v: Value) bool {
+        return v == .nil;
+    }
+
+    pub fn asObj(v: Value) ?*Obj {
+        return switch (v) {
+            .obj => |obj| return obj,
+            else => return null,
+        };
+    }
 
     pub fn isFalsey(self: Value) bool {
         return switch (self) {
@@ -43,6 +71,13 @@ pub const Value = union(ValueType) {
         };
     }
 
+    pub fn as(self: Value, comptime ty: ObjType) ?*ToType(ty) {
+        return switch (self) {
+            .obj => |obj| obj.as(ty),
+            else => null,
+        };
+    }
+
     pub fn isObjType(self: Value, ty: ObjType) bool {
         return switch (self) {
             .obj => |obj| obj.type == ty,
@@ -50,81 +85,10 @@ pub const Value = union(ValueType) {
         };
     }
 
-    pub fn isString(self: Value) bool {
-        return self.isObjType(.String);
-    }
-
-    pub fn isClosure(self: Value) bool {
-        return self.isObjType(.Closure);
-    }
-
-    pub fn isFunction(self: Value) bool {
-        return self.isObjType(.Function);
-    }
-
-    pub fn isNative(self: Value) bool {
-        return self.isObjType(.Native);
-    }
-
-    pub fn isUpvalue(self: Value) bool {
-        return self.isObjType(.Upvalue);
-    }
-
-    pub fn isClass(self: Value) bool {
-        return self.isObjType(.Class);
-    }
-
-    pub fn isInstance(self: Value) bool {
-        return self.isObjType(.Instance);
-    }
-
-    pub fn isBoundMethod(self: Value) bool {
-        return self.isObjType(.BoundMethod);
-    }
-
-    pub fn asString(self: Value) *ObjString {
-        std.debug.assert(self.isString());
-        return self.obj.asString();
-    }
-
-    pub fn asClosure(self: Value) *ObjClosure {
-        std.debug.assert(self.isClosure());
-        return self.obj.asClosure();
-    }
-
-    pub fn asFunction(self: Value) *ObjFunction {
-        std.debug.assert(self.isFunction());
-        return self.obj.asFunction();
-    }
-
-    pub fn asNative(self: Value) *ObjNative {
-        std.debug.assert(self.isNative());
-        return self.obj.asNative();
-    }
-
-    pub fn asUpvalue(self: Value) *ObjUpvalue {
-        std.debug.assert(self.isUpvalue());
-        return self.obj.asUpvalue();
-    }
-
-    pub fn asClass(self: Value) *ObjClass {
-        std.debug.assert(self.isClass());
-        return self.obj.asClass();
-    }
-
-    pub fn asInstance(self: Value) *ObjInstance {
-        std.debug.assert(self.isInstance());
-        return self.obj.asInstance();
-    }
-
-    pub fn asBoundMethod(self: Value) *ObjBoundMethod {
-        std.debug.assert(self.isBoundMethod());
-        return self.obj.asBoundMethod();
-    }
-
     pub fn asStringBytes(self: Value) []u8 {
-        return self.asString().str;
+        return self.as(.String).?.str;
     }
+
     pub fn format(
         self: Value,
         comptime fmt: []const u8,
@@ -140,28 +104,28 @@ pub const Value = union(ValueType) {
             .obj => |obj| {
                 switch (obj.type) {
                     .String => {
-                        try writer.print("{s}", .{obj.asString()});
+                        try writer.print("{s}", .{obj.as(.String).?});
                     },
                     .Class => {
-                        try writer.print("{s}", .{obj.asClass()});
+                        try writer.print("{s}", .{obj.as(.Class).?});
                     },
                     .Instance => {
-                        try writer.print("{s}", .{obj.asInstance()});
+                        try writer.print("{s}", .{obj.as(.Instance).?});
                     },
                     .Function => {
-                        try writer.print("{s}", .{obj.asFunction()});
+                        try writer.print("{s}", .{obj.as(.Function).?});
                     },
                     .Closure => {
-                        try writer.print("{s}", .{obj.asClosure()});
+                        try writer.print("{s}", .{obj.as(.Closure).?});
                     },
                     .Native => {
-                        try writer.print("{s}", .{obj.asNative()});
+                        try writer.print("{s}", .{obj.as(.Native).?});
                     },
                     .Upvalue => {
-                        try writer.print("{s}", .{obj.asUpvalue()});
+                        try writer.print("{s}", .{obj.as(.Upvalue).?});
                     },
                     .BoundMethod => {
-                        try writer.print("{s}", .{obj.asBoundMethod()});
+                        try writer.print("{s}", .{obj.as(.BoundMethod).?});
                     },
                 }
             },

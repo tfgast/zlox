@@ -154,11 +154,11 @@ pub const GarbageCollector = struct {
     }
     fn allocateString(self: *Self, owned_chars: []u8, hash: u32) !*ObjString {
         const string = try self.allocateObject(.String);
-        self.vm.push(.{ .obj = string.asObj() });
+        self.vm.push(string.val());
         defer _ = self.vm.pop();
         string.str = owned_chars;
         string.hash = hash;
-        _ = try self.strings.set(string, .nil);
+        _ = try self.strings.set(string, Value.nil());
         return string;
     }
 
@@ -175,28 +175,28 @@ pub const GarbageCollector = struct {
         std.log.debug("{*} free {s}", .{ obj, @tagName(obj.type) });
         switch (obj.type) {
             .String => {
-                self.freeString(obj.asString());
+                self.freeString(obj.as(.String).?);
             },
             .Function => {
-                self.freeFunction(obj.asFunction());
+                self.freeFunction(obj.as(.Function).?);
             },
             .Native => {
-                self.freeNative(obj.asNative());
+                self.freeNative(obj.as(.Native).?);
             },
             .Closure => {
-                self.freeClosure(obj.asClosure());
+                self.freeClosure(obj.as(.Closure).?);
             },
             .Upvalue => {
-                self.freeUpvalue(obj.asUpvalue());
+                self.freeUpvalue(obj.as(.Upvalue).?);
             },
             .Class => {
-                self.freeClass(obj.asClass());
+                self.freeClass(obj.as(.Class).?);
             },
             .Instance => {
-                self.freeInstance(obj.asInstance());
+                self.freeInstance(obj.as(.Instance).?);
             },
             .BoundMethod => {
-                self.freeBoundMethod(obj.asBoundMethod());
+                self.freeBoundMethod(obj.as(.BoundMethod).?);
             },
         }
     }
@@ -280,15 +280,14 @@ pub const GarbageCollector = struct {
     }
 
     fn markValue(self: *Self, value: Value) void {
-        return switch (value) {
-            .obj => |obj| self.markObj(obj),
-            else => {},
-        };
+        if (value.asObj()) |obj| {
+            self.markObj(obj);
+        }
     }
 
     fn markObj(self: *Self, obj: *Obj) void {
         if (obj.is_marked) return;
-        const v = Value{ .obj = obj };
+        const v = Value.obj(obj);
         std.log.debug("{*} mark {s}", .{ obj, v });
         obj.is_marked = true;
         self.gray_stack.append(obj) catch {
@@ -317,29 +316,29 @@ pub const GarbageCollector = struct {
     }
 
     fn blackenObject(self: *Self, obj: *Obj) void {
-        const v = Value{ .obj = obj };
+        const v = Value.obj(obj);
         std.log.debug("{*} blacken {s}", .{ obj, v });
         switch (obj.type) {
-            .Upvalue => self.markValue(obj.asUpvalue().closed),
+            .Upvalue => self.markValue(obj.as(.Upvalue).?.closed),
             .Function => {
-                const function = obj.asFunction();
+                const function = obj.as(.Function).?;
                 if (function.name) |name| {
                     self.markObj(name.asObj());
                 }
                 self.markArray(&function.chunk.constants);
             },
             .Class => {
-                const class = obj.asClass();
+                const class = obj.as(.Class).?;
                 self.markObj(class.name.asObj());
                 self.markTable(&class.methods);
             },
             .Instance => {
-                const instance = obj.asInstance();
+                const instance = obj.as(.Instance).?;
                 self.markObj(instance.class.asObj());
                 self.markTable(&instance.fields);
             },
             .Closure => {
-                const closure = obj.asClosure();
+                const closure = obj.as(.Closure).?;
                 self.markObj(closure.function.asObj());
                 for (closure.upvalues) |maybe_upvalue| {
                     const upvalue = maybe_upvalue orelse continue;
@@ -347,7 +346,7 @@ pub const GarbageCollector = struct {
                 }
             },
             .BoundMethod => {
-                const bound = obj.asBoundMethod();
+                const bound = obj.as(.BoundMethod).?;
                 self.markValue(bound.receiver);
                 self.markObj(bound.method.asObj());
             },

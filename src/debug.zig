@@ -44,7 +44,7 @@ pub fn disassembleInstruction(c: *chunk.Chunk, offset: usize) usize {
             const v = c.constants.values[constant];
             print("{s:<16} {d: >4} {s}\n", .{ "OP_CLOSURE", constant, v });
 
-            const function = v.asFunction();
+            const function = v.as(.Function).?;
             var j: u8 = 0;
             while (j < function.upvalue_count) : (j += 1) {
                 const is_local = if (c.code[o] == 1) "local" else "upvalue";

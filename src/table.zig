@@ -51,7 +51,7 @@ pub const Table = struct {
         }
         var entry = Self.findEntry(self.entries, key);
         const isNewKey = entry.key == null;
-        if (isNewKey and entry.value == .nil) {
+        if (isNewKey and entry.value.isNil()) {
             self.count += 1;
         }
         entry.key = key;
@@ -69,7 +69,7 @@ pub const Table = struct {
         }
         // Place tombstone in the entry
         entry.key = null;
-        entry.value = .{ .boolean = true };
+        entry.value = Value.boolean(true);
         return true;
     }
 
@@ -82,12 +82,12 @@ pub const Table = struct {
 
     fn findEntry(entries: []Entry, key: *ObjString) *Entry {
         const capacity = entries.len;
-        var index = key.hash % capacity;
+        var index = key.hash & (capacity - 1);
         var tombstone: ?*Entry = null;
         while (true) {
             const entry = &entries[index];
             if (entry.key == null) {
-                if (entry.value == .nil) {
+                if (entry.value.isNil()) {
                     //Empty entry
                     if (tombstone) |t| {
                         return t;
@@ -117,14 +117,14 @@ pub const Table = struct {
             return null;
         }
         const capacity = self.entries.len;
-        var index = hash % capacity;
+        var index = hash & (capacity - 1);
         while (true) {
             const entry = &self.entries[index];
             if (entry.key) |key| {
                 if (key.hash == hash and std.mem.eql(u8, key.str, chars)) {
                     return entry.key;
                 }
-            } else if (entry.value == .nil) {
+            } else if (entry.value.isNil()) {
                 // tombstone
                 return null;
             }
@@ -137,7 +137,7 @@ pub const Table = struct {
 
     fn adjustCapacity(self: *Self, new_capacity: usize) !void {
         var entries = try self.gc.allocator.alloc(Entry, new_capacity);
-        std.mem.set(Entry, entries, Entry{ .key = null, .value = .nil });
+        std.mem.set(Entry, entries, Entry{ .key = null, .value = Value.nil() });
         self.count = 0;
         for (self.entries) |entry| {
             const key = entry.key orelse continue;

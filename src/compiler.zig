@@ -371,7 +371,7 @@ const CompileContext = struct {
 
         const f = context.endCompiler();
         self.emitOpCode(.Closure);
-        self.emitByte(self.makeConstant(.{ .obj = f.asObj() }));
+        self.emitByte(self.makeConstant(Value.obj(f.asObj())));
 
         for (context.upvalues[0..f.upvalue_count]) |upvalue| {
             self.emitByte(if (upvalue.is_local) 1 else 0);
@@ -622,7 +622,7 @@ const CompileContext = struct {
         const value = std.fmt.parseFloat(f64, self.parser.previous.str) catch |err| {
             return self.errorAtPrevious("Could not parse number", err);
         };
-        self.emitConstant(.{ .number = value });
+        self.emitConstant(Value.number(value));
     }
 
     fn string(self: *Self, can_assign: bool) void {
@@ -632,7 +632,7 @@ const CompileContext = struct {
         const value = self.gc.copyString(self.parser.previous.str[1..n]) catch |err| {
             return self.errorAtPrevious("Could not allocate memory for string", err);
         };
-        self.emitConstant(.{ .obj = value.asObj() });
+        self.emitConstant(Value.obj(value.asObj()));
     }
 
     fn namedVariable(self: *Self, name: Token, can_assign: bool) void {
@@ -796,7 +796,7 @@ const CompileContext = struct {
             self.errorAtPrevious("Could not allocate memory for identifier", err);
             return 0;
         };
-        return self.makeConstant(.{ .obj = value.asObj() });
+        return self.makeConstant(Value.obj(value.asObj()));
     }
 
     fn makeConstant(self: *Self, value: Value) u8 {

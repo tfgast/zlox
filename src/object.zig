@@ -25,53 +25,12 @@ pub const Obj = struct {
     next: ?*Self,
     is_marked: bool,
 
-    pub fn as(self: *Self, comptime ty: ObjType) *ToType(ty) {
-        std.debug.assert(self.type == ty);
-        return @ptrCast(*ToType(ty), self);
-    }
-
-    pub fn asString(self: *Self) *ObjString {
-        std.debug.assert(self.type == .String);
-        return @ptrCast(*ObjString, self);
-    }
-
-    pub fn asFunction(self: *Self) *ObjFunction {
-        std.debug.assert(self.type == .Function);
-        return @ptrCast(*ObjFunction, self);
-    }
-
-    pub fn asNative(self: *Self) *ObjNative {
-        std.debug.assert(self.type == .Native);
-        return @ptrCast(*ObjNative, self);
-    }
-
-    pub fn asClosure(self: *Self) *ObjClosure {
-        std.debug.assert(self.type == .Closure);
-        return @ptrCast(*ObjClosure, self);
-    }
-
-    pub fn asUpvalue(self: *Self) *ObjUpvalue {
-        std.debug.assert(self.type == .Upvalue);
-        return @ptrCast(*ObjUpvalue, self);
-    }
-
-    pub fn asClass(self: *Self) *ObjClass {
-        std.debug.assert(self.type == .Class);
-        return @ptrCast(*ObjClass, self);
-    }
-
-    pub fn asInstance(self: *Self) *ObjInstance {
-        std.debug.assert(self.type == .Instance);
-        return @ptrCast(*ObjInstance, self);
-    }
-
-    pub fn asBoundMethod(self: *Self) *ObjBoundMethod {
-        std.debug.assert(self.type == .BoundMethod);
-        return @ptrCast(*ObjBoundMethod, self);
+    pub fn as(self: *Self, comptime ty: ObjType) ?*ToType(ty) {
+        return if (self.type == ty) @ptrCast(*ToType(ty), self) else null;
     }
 
     pub fn asStringBytes(self: *Self) []u8 {
-        return self.asString().str;
+        return self.as(.String).?.str;
     }
 };
 
@@ -84,6 +43,10 @@ pub const ObjString = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
     }
 
     pub fn format(
@@ -109,6 +72,10 @@ pub const ObjFunction = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
     }
 
     pub fn format(
@@ -139,6 +106,10 @@ pub const ObjNative = struct {
         return &self.obj;
     }
 
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
+    }
+
     pub fn format(
         self: Self,
         comptime fmt: []const u8,
@@ -161,6 +132,10 @@ pub const ObjClosure = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
     }
 
     pub fn format(
@@ -187,6 +162,10 @@ pub const ObjUpvalue = struct {
         return &self.obj;
     }
 
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
+    }
+
     pub fn format(
         self: Self,
         comptime fmt: []const u8,
@@ -209,6 +188,10 @@ pub const ObjClass = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
     }
 
     pub fn format(
@@ -234,6 +217,10 @@ pub const ObjInstance = struct {
         return &self.obj;
     }
 
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
+    }
+
     pub fn format(
         self: Self,
         comptime fmt: []const u8,
@@ -255,6 +242,10 @@ pub const ObjBoundMethod = struct {
 
     pub fn asObj(self: *Self) *Obj {
         return &self.obj;
+    }
+
+    pub fn val(self: *Self) Value {
+        return Value.obj(self.asObj());
     }
 
     pub fn format(
