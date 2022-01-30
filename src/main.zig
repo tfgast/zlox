@@ -6,7 +6,8 @@ const vm = @import("vm.zig");
 pub const log_level = std.log.Level.debug;
 pub var runtime_log_level = std.log.default_level;
 
-pub const DEBUG_STRESS_GC = true;
+pub const DEBUG_STRESS_GC = false;
+pub const DEBUG_LIMIT_EXECUTION = 1000000;
 
 const InterpretError = vm.InterpretError;
 
@@ -37,7 +38,9 @@ pub fn log(
 pub fn main() anyerror!void {
     // const allocator = std.heap.page_allocator;
     var gpa = GPA{};
+    defer if (gpa.deinit()) std.process.abort();
     const allocator = gpa.allocator();
+    // const allocator = std.heap.c_allocator;
 
     if (std.os.getenv("ZLOX_DEBUG")) |value| {
         _ = value;
@@ -88,11 +91,12 @@ pub fn runFile(allocator: Allocator, path: []u8) !void {
     );
     defer allocator.free(contents);
 
-    v.interpret(contents) catch |err| {
-        if (err == InterpretError.Compile) {
-            std.process.exit(65);
-        } else if (err == InterpretError.Runtime) {
-            std.process.exit(70);
-        }
-    };
+    // v.interpret(contents) catch |err| {
+    //     if (err == InterpretError.Compile) {
+    //         std.process.exit(65);
+    //     } else if (err == InterpretError.Runtime) {
+    //         std.process.exit(70);
+    //     }
+    // };
+    v.interpret(contents) catch return;
 }

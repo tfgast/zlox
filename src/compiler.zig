@@ -17,7 +17,9 @@ const object = @import("object.zig");
 const ObjString = object.ObjString;
 const ObjFunction = object.ObjFunction;
 
-const DEBUG_PRINT_CODE = @hasDecl(root, "DEBUG_PRINT_CODE ") and root.DEBUG_PRINT_CODE;
+const DEBUG_PRINT_CODE = @hasDecl(root, "DEBUG_PRINT_CODE") and root.DEBUG_PRINT_CODE;
+
+const ERROR_LIMIT = 255;
 
 pub const CompileError = error{ Compile, OutOfMemory, ICE, InvalidCharacter };
 
@@ -27,6 +29,7 @@ const Parser = struct {
     hadError: ?CompileError = null,
     panicMode: bool = false,
     abortMode: bool = false,
+    error_count: u32 = 0,
     scanner: Scanner,
 };
 
@@ -189,6 +192,10 @@ const CompileContext = struct {
 
     fn advance(self: *Self) void {
         self.parser.previous = self.parser.current;
+        if (self.parser.abortMode) {
+            self.parser.current = Token{ .type = .EOF };
+            return;
+        }
         while (true) {
             self.parser.current = self.parser.scanner.scanToken();
             // std.debug.print("Scanning: {} {s} {}\n", self.parser.current);
@@ -329,6 +336,7 @@ const CompileContext = struct {
         if (self.parser.abortMode or self.parser.panicMode) return;
         self.parser.panicMode = true;
         self.parser.hadError = err;
+        self.parser.error_count += 1;
         const print = std.debug.print;
         print("[line {d}] Error", .{token.line});
         if (token.type == .EOF) {
@@ -337,6 +345,10 @@ const CompileContext = struct {
             print(" at '{s}'", .{token.str});
         }
         print(": {s}\n", .{message});
+        if (self.parser.error_count >= ERROR_LIMIT) {
+            print("Too many errors {d}. Rest skipped", .{self.parser.error_count});
+            self.parser.abortMode = true;
+        }
     }
 
     fn expression(self: *Self) void {

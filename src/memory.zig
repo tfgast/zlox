@@ -2,7 +2,7 @@ const std = @import("std");
 const root = @import("root");
 const assert = std.debug.assert;
 
-const DEBUG_STRESS_GC = @hasDecl(root, "DEBUG_STRESS_GC ") and root.DEBUG_STRESS_GC;
+const DEBUG_STRESS_GC = @hasDecl(root, "DEBUG_STRESS_GC") and root.DEBUG_STRESS_GC;
 
 const Allocator = std.mem.Allocator;
 const Table = @import("table.zig").Table;

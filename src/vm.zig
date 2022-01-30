@@ -24,7 +24,8 @@ const Allocator = std.mem.Allocator;
 pub const RuntimeError = error{Runtime};
 pub const InterpretError = RuntimeError || CompileError || std.os.WriteError;
 
-const DEBUG_TRACE_EXECUTION = @hasDecl(root, "DEBUG_TRACE_EXECUTION ") and root.DEBUG_TRACE_EXECUTION;
+const DEBUG_TRACE_EXECUTION = @hasDecl(root, "DEBUG_TRACE_EXECUTION") and root.DEBUG_TRACE_EXECUTION;
+const DEBUG_LIMIT_EXECUTION = if (@hasDecl(root, "DEBUG_LIMIT_EXECUTION")) root.DEBUG_LIMIT_EXECUTION else -1;
 const FRAMES_MAX = 64;
 const STACK_MAX = FRAMES_MAX * 256;
 
@@ -177,6 +178,16 @@ pub const VM = struct {
                 }
                 std.debug.print("\n", .{});
                 _ = debug.disassembleInstruction(&self.frame[0].closure.function.chunk, @ptrToInt(self.frame[0].ip) - @ptrToInt(self.frame[0].closure.function.chunk.code.ptr));
+            }
+            if (DEBUG_LIMIT_EXECUTION >= 0) {
+                const Execution = struct {
+                    var limit: i64 = 0;
+                };
+                Execution.limit += 1;
+                if (Execution.limit > DEBUG_LIMIT_EXECUTION) {
+                    self.runtimeError("Execeeded bytecode execution limit {d}.", .{DEBUG_LIMIT_EXECUTION});
+                    return InterpretError.Runtime;
+                }
             }
             const instruction = self.read_byte();
             switch (@intToEnum(OpCode, instruction)) {
